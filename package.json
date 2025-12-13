@@ -1,0 +1,36 @@
+{
+  "name": "wpcs-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for WordPress Coding Standards - phpcs/phpcbf integration for Claude AI",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "wpcs-mcp-server": "./build/index.js"
+  },
+  "scripts": {
+    "build": "./node_modules/.bin/tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "wordpress",
+    "phpcs",
+    "wpcs",
+    "coding-standards",
+    "model-context-protocol",
+    "claude"
+  ],
+  "author": "Varun Dubey <varun@wbcomdesigns.com>",
+  "license": "GPL-2.0-or-later",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.26",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
