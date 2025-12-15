@@ -1,5 +1,6 @@
 /**
  * WPCS MCP Server - Tool Definitions
+ * Optimized for WordPress plugin and theme development
  */
 
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -8,7 +9,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_check_staged',
     description:
-      'Check all staged PHP files against WordPress Coding Standards. Use this before committing to ensure code quality.',
+      'Check all staged PHP files against WordPress Coding Standards. Use this before committing to ensure code quality. Automatically excludes vendor/, node_modules/, and build/ directories.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -39,7 +40,8 @@ export const tools: Tool[] = [
   },
   {
     name: 'wpcs_check_directory',
-    description: 'Check all PHP files in a directory against WordPress Coding Standards.',
+    description:
+      'Check all PHP files in a directory against WordPress Coding Standards. Automatically excludes vendor/, node_modules/, and build/ directories.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -57,7 +59,8 @@ export const tools: Tool[] = [
   },
   {
     name: 'wpcs_fix_file',
-    description: 'Auto-fix WordPress Coding Standards violations in a PHP file using phpcbf.',
+    description:
+      'Auto-fix WordPress Coding Standards violations in a PHP file using phpcbf. Fixes spacing, formatting, and other auto-fixable issues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -76,7 +79,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_pre_commit',
     description:
-      'Pre-commit workflow: Auto-fix staged PHP files, re-stage them, and report remaining issues. Returns whether commit should proceed.',
+      'Pre-commit workflow optimized for WordPress plugins/themes: Auto-fix staged PHP files, re-stage them, and report remaining issues. Automatically excludes vendor/, node_modules/, and build/ directories. Returns whether commit should proceed.',
     inputSchema: {
       type: 'object',
       properties: {

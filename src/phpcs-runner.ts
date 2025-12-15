@@ -7,9 +7,70 @@ import { PhpcsResult, WpcsCheckResult, WpcsFixResult } from './types.js';
 
 export class PhpcsRunner {
   private standard: string;
+  private excludePatterns: string[];
+  private textDomain: string | null;
+  private minPhpVersion: string | null;
 
-  constructor(standard: string = 'WordPress') {
+  constructor(
+    standard: string = 'WordPress',
+    options: {
+      excludePatterns?: string[];
+      textDomain?: string;
+      minPhpVersion?: string;
+    } = {}
+  ) {
     this.standard = standard;
+    this.excludePatterns = options.excludePatterns || [
+      'vendor/*',
+      'node_modules/*',
+      'build/*',
+      'dist/*',
+      'assets/js/vendor/*',
+      'assets/css/vendor/*',
+      '.git/*',
+    ];
+    this.textDomain = options.textDomain || null;
+    this.minPhpVersion = options.minPhpVersion || null;
+  }
+
+  /**
+   * Build phpcs command with all options
+   */
+  private buildCommand(target: string, reportFormat: string = 'json'): string {
+    let command = `phpcs --standard=${this.standard} --report=${reportFormat}`;
+
+    // Add exclude patterns
+    if (this.excludePatterns.length > 0) {
+      command += ` --ignore=${this.excludePatterns.join(',')}`;
+    }
+
+    // Add text domain check
+    if (this.textDomain) {
+      command += ` --runtime-set text_domain ${this.textDomain}`;
+    }
+
+    // Add minimum PHP version
+    if (this.minPhpVersion) {
+      command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+    }
+
+    command += ` "${target}"`;
+    return command;
+  }
+
+  /**
+   * Build phpcbf command with all options
+   */
+  private buildFixCommand(target: string): string {
+    let command = `phpcbf --standard=${this.standard}`;
+
+    // Add exclude patterns
+    if (this.excludePatterns.length > 0) {
+      command += ` --ignore=${this.excludePatterns.join(',')}`;
+    }
+
+    command += ` "${target}"`;
+    return command;
   }
 
   /**
@@ -19,7 +80,7 @@ export class PhpcsRunner {
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
-      const command = `phpcs --standard=${this.standard} --report=json "${target}"`;
+      const command = this.buildCommand(target);
 
       try {
         execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
@@ -97,7 +158,7 @@ export class PhpcsRunner {
       }
 
       // Run phpcbf
-      const command = `phpcbf --standard=${this.standard} "${filePath}"`;
+      const command = this.buildFixCommand(filePath);
 
       try {
         execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
@@ -148,7 +209,24 @@ export class PhpcsRunner {
 
     // Run phpcs on all files at once
     const fileList = files.map((f) => `"${f}"`).join(' ');
-    const command = `phpcs --standard=${this.standard} --report=json ${fileList}`;
+    let command = `phpcs --standard=${this.standard} --report=json`;
+
+    // Add exclude patterns
+    if (this.excludePatterns.length > 0) {
+      command += ` --ignore=${this.excludePatterns.join(',')}`;
+    }
+
+    // Add text domain check
+    if (this.textDomain) {
+      command += ` --runtime-set text_domain ${this.textDomain}`;
+    }
+
+    // Add minimum PHP version
+    if (this.minPhpVersion) {
+      command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+    }
+
+    command += ` ${fileList}`;
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
