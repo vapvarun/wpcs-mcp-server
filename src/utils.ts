@@ -87,3 +87,82 @@ export function formatPath(filePath: string, workingDir?: string): string {
   }
   return filePath;
 }
+
+/**
+ * Auto-install phpcs and WPCS globally via composer
+ * Returns true if installation succeeded
+ */
+export async function autoInstallWpcs(): Promise<{ success: boolean; message: string }> {
+  console.error('Auto-installing WPCS dependencies...');
+
+  try {
+    // Check if composer is available
+    try {
+      execSync('which composer', { encoding: 'utf-8' });
+    } catch {
+      return {
+        success: false,
+        message: 'Composer not found. Please install Composer first: https://getcomposer.org',
+      };
+    }
+
+    // Step 1: Allow the composer installer plugin
+    console.error('Configuring composer plugins...');
+    try {
+      execSync(
+        'composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true',
+        { encoding: 'utf-8', stdio: 'pipe' }
+      );
+    } catch {
+      // Ignore if already configured
+    }
+
+    // Step 2: Install phpcs and WPCS
+    console.error('Installing PHP_CodeSniffer and WordPress Coding Standards...');
+    execSync(
+      'composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer',
+      { encoding: 'utf-8', stdio: 'pipe', timeout: 120000 }
+    );
+
+    // Step 3: Verify installation
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    const composerBin = `${homeDir}/.composer/vendor/bin`;
+
+    // Add to PATH for this session
+    process.env.PATH = `${composerBin}:${process.env.PATH}`;
+
+    // Verify phpcs works
+    const phpcsPath = execSync('which phpcs', { encoding: 'utf-8' }).trim();
+    const standards = execSync('phpcs -i', { encoding: 'utf-8' });
+
+    if (!standards.includes('WordPress')) {
+      return {
+        success: false,
+        message: 'WPCS installed but WordPress standard not detected. Try: phpcs --config-set installed_paths ~/.composer/vendor/wp-coding-standards/wpcs',
+      };
+    }
+
+    return {
+      success: true,
+      message: `Successfully installed WPCS. phpcs path: ${phpcsPath}`,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      message: `Auto-install failed: ${errorMessage}`,
+    };
+  }
+}
+
+/**
+ * Ensure PATH includes composer bin directory
+ */
+export function ensureComposerInPath(): void {
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+  const composerBin = `${homeDir}/.composer/vendor/bin`;
+
+  if (!process.env.PATH?.includes(composerBin)) {
+    process.env.PATH = `${composerBin}:${process.env.PATH}`;
+  }
+}

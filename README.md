@@ -20,22 +20,36 @@ A Model Context Protocol (MCP) server that integrates WordPress Coding Standards
 | `wpcs_fix_file` | Auto-fix WPCS violations in a file |
 | `wpcs_pre_commit` | Full pre-commit workflow: auto-fix, re-stage, and report |
 
-## Prerequisites
+## Auto-Setup (New!)
 
-### 1. Install PHP CodeSniffer and WordPress Coding Standards
+**The WPCS MCP Server now auto-installs dependencies on first run!**
+
+When you start the server for the first time, it will automatically:
+1. Check if phpcs and WPCS are installed
+2. If not found, auto-install via Composer:
+   - PHP_CodeSniffer
+   - WordPress Coding Standards
+   - phpcodesniffer-composer-installer
+3. Configure the paths automatically
+4. Start the server
+
+**Requirements for auto-setup:**
+- Composer must be installed and available in PATH
+- Node.js 18+
+
+If auto-setup fails, you can manually install:
 
 ```bash
-# Install globally via Composer
 composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
 composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer
-
-# Add composer bin to PATH (add to ~/.zshrc or ~/.bashrc)
 export PATH="$HOME/.composer/vendor/bin:$PATH"
-
-# Verify installation
-phpcs -i
-# Should show: WordPress, WordPress-Core, WordPress-Docs, WordPress-Extra
 ```
+
+## Prerequisites
+
+### 1. Composer (Required for auto-setup)
+
+Install Composer from https://getcomposer.org if not already installed.
 
 ### 2. Node.js 18+
 

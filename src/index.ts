@@ -9,25 +9,42 @@
  */
 
 import { WpcsMcpServer } from './server.js';
-import { checkPhpcsInstalled, checkWpcsInstalled } from './utils.js';
+import { checkPhpcsInstalled, checkWpcsInstalled, autoInstallWpcs, ensureComposerInPath } from './utils.js';
 
 async function main() {
-  // Verify dependencies
-  const phpcsCheck = checkPhpcsInstalled();
-  if (!phpcsCheck.installed) {
-    console.error('ERROR: phpcs not found');
-    console.error(phpcsCheck.error);
-    console.error('\nInstallation:');
-    console.error('  composer global require squizlabs/php_codesniffer');
-    console.error('  composer global require wp-coding-standards/wpcs');
-    process.exit(1);
-  }
+  // Ensure composer bin is in PATH
+  ensureComposerInPath();
 
-  const wpcsCheck = checkWpcsInstalled();
-  if (!wpcsCheck.installed) {
-    console.error('ERROR: WordPress coding standard not found');
-    console.error(wpcsCheck.error);
-    process.exit(1);
+  // Check if phpcs is installed
+  let phpcsCheck = checkPhpcsInstalled();
+  let wpcsCheck = checkWpcsInstalled();
+
+  // Auto-install if not found
+  if (!phpcsCheck.installed || !wpcsCheck.installed) {
+    console.error('WPCS dependencies not found. Attempting auto-install...');
+
+    const installResult = await autoInstallWpcs();
+
+    if (!installResult.success) {
+      console.error('Auto-install failed:', installResult.message);
+      console.error('\nManual installation:');
+      console.error('  composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true');
+      console.error('  composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer');
+      console.error('  export PATH="$HOME/.composer/vendor/bin:$PATH"');
+      process.exit(1);
+    }
+
+    console.error(installResult.message);
+
+    // Re-check after installation
+    phpcsCheck = checkPhpcsInstalled();
+    wpcsCheck = checkWpcsInstalled();
+
+    if (!phpcsCheck.installed || !wpcsCheck.installed) {
+      console.error('Installation completed but verification failed.');
+      console.error('Please add composer bin to your PATH: export PATH="$HOME/.composer/vendor/bin:$PATH"');
+      process.exit(1);
+    }
   }
 
   console.error('Starting WPCS MCP Server...');
