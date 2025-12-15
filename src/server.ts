@@ -82,6 +82,13 @@ export class WpcsMcpServer {
               toolArgs.auto_stage !== false
             );
 
+          case 'wpcs_check_php_compatibility':
+            return await this.checkPhpCompatibility(
+              toolArgs.target as string,
+              toolArgs.php_version as string | undefined,
+              toolArgs.working_dir as string | undefined
+            );
+
           default:
             return this.errorResult(`Unknown tool: ${name}`);
         }
@@ -244,6 +251,93 @@ export class WpcsMcpServer {
       ],
       isError: !checkResult.canCommit,
     };
+  }
+
+  private async checkPhpCompatibility(
+    target: string,
+    phpVersion?: string,
+    workingDir?: string
+  ): Promise<CallToolResult> {
+    if (!target) {
+      return this.errorResult('target is required');
+    }
+
+    const version = phpVersion || '7.4-';
+    const options = workingDir ? { cwd: workingDir } : {};
+
+    // Build exclude patterns
+    const excludePatterns = [
+      'vendor/*',
+      'node_modules/*',
+      'build/*',
+      'dist/*',
+      '.git/*',
+    ];
+
+    let command = `phpcs --standard=PHPCompatibilityWP --runtime-set testVersion ${version} --report=json`;
+    command += ` --ignore=${excludePatterns.join(',')}`;
+    command += ` "${target}"`;
+
+    try {
+      try {
+        execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+
+        return this.successResult(
+          `PHP COMPATIBILITY: PASSED\n\nAll files are compatible with PHP ${version}.\nNo deprecated functions, removed features, or syntax issues found.`
+        );
+      } catch (error: unknown) {
+        const execError = error as { stdout?: string; message?: string };
+        const output = execError.stdout || '';
+
+        if (!output) {
+          return this.errorResult(`phpcs failed: ${execError.message || 'Unknown error'}`);
+        }
+
+        const result = JSON.parse(output);
+
+        let message = `PHP COMPATIBILITY: ISSUES FOUND\n\n`;
+        message += `Checking compatibility with PHP ${version}\n\n`;
+
+        let totalErrors = 0;
+        let totalWarnings = 0;
+
+        for (const [filePath, data] of Object.entries(result.files) as [string, { errors: number; warnings: number; messages: Array<{ line: number; type: string; message: string; source: string }> }][]) {
+          totalErrors += data.errors;
+          totalWarnings += data.warnings;
+
+          message += `${formatPath(filePath, workingDir)} (${data.errors} errors, ${data.warnings} warnings):\n`;
+
+          for (const msg of data.messages) {
+            const prefix = msg.type === 'ERROR' ? '[ERROR]' : '[WARNING]';
+            message += `  Line ${msg.line}: ${prefix} ${msg.message}\n`;
+
+            // Add helpful context for common issues
+            if (msg.source.includes('RemovedFunction')) {
+              message += `    → This function was removed in a newer PHP version\n`;
+            } else if (msg.source.includes('DeprecatedFunction')) {
+              message += `    → This function is deprecated and may be removed\n`;
+            } else if (msg.source.includes('NewFeature')) {
+              message += `    → This feature requires a newer PHP version\n`;
+            }
+          }
+          message += '\n';
+        }
+
+        message += `\nSummary: ${totalErrors} error(s), ${totalWarnings} warning(s)\n`;
+
+        if (totalErrors > 0) {
+          message += '\nFix these issues to ensure compatibility with PHP ' + version;
+        }
+
+        return {
+          content: [{ type: 'text', text: message } as TextContent],
+          isError: totalErrors > 0,
+        };
+      }
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      return this.errorResult(`PHP compatibility check failed: ${err.message || 'Unknown error'}`);
+    }
   }
 
   private formatCheckResult(result: WpcsCheckResult, workingDir?: string): CallToolResult {

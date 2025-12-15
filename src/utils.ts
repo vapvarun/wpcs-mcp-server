@@ -117,11 +117,11 @@ export async function autoInstallWpcs(): Promise<{ success: boolean; message: st
       // Ignore if already configured
     }
 
-    // Step 2: Install phpcs and WPCS
-    console.error('Installing PHP_CodeSniffer and WordPress Coding Standards...');
+    // Step 2: Install phpcs, WPCS, and PHPCompatibility
+    console.error('Installing PHP_CodeSniffer, WordPress Coding Standards, and PHPCompatibility...');
     execSync(
-      'composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer',
-      { encoding: 'utf-8', stdio: 'pipe', timeout: 120000 }
+      'composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs phpcompatibility/phpcompatibility-wp dealerdirect/phpcodesniffer-composer-installer',
+      { encoding: 'utf-8', stdio: 'pipe', timeout: 180000 }
     );
 
     // Step 3: Verify installation

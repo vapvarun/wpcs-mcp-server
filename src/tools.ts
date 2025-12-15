@@ -95,4 +95,28 @@ export const tools: Tool[] = [
       },
     },
   },
+  {
+    name: 'wpcs_check_php_compatibility',
+    description:
+      'Check PHP files for compatibility with specific PHP versions (8.1, 8.2, 8.3, 8.4). Uses PHPCompatibilityWP to detect deprecated functions, removed features, and syntax incompatibilities. Essential for ensuring your plugin/theme works across PHP versions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: {
+          type: 'string',
+          description: 'File or directory to check',
+        },
+        php_version: {
+          type: 'string',
+          description: 'PHP version to check compatibility for (e.g., "8.1", "8.2", "8.3", "8.4"). Can also specify range like "7.4-8.4"',
+          default: '7.4-',
+        },
+        working_dir: {
+          type: 'string',
+          description: 'Working directory for relative paths',
+        },
+      },
+      required: ['target'],
+    },
+  },
 ];
