@@ -2,6 +2,20 @@
 
 A Model Context Protocol (MCP) server that integrates WordPress Coding Standards (WPCS) with Claude AI. Automatically check and fix your WordPress plugin/theme code to meet WordPress.org standards.
 
+> **Don't use Claude AI?** No problem! See [GIT-HOOKS-SETUP.md](GIT-HOOKS-SETUP.md) for standalone Git hooks, GitHub Actions, and CI/CD setup.
+
+## One-Line Install (Git Hooks Only)
+
+For automatic WPCS checks on every commit **without Claude AI**:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/vapvarun/wpcs-mcp-server/main/scripts/install-hooks.sh | bash
+```
+
+This installs phpcs + WPCS + PHPCompatibility and sets up pre-commit hooks in your current repo.
+
+---
+
 ## Why Use This?
 
 If you're developing WordPress plugins or themes, your code must follow [WordPress Coding Standards](https://developer.wordpress.org/coding-standards/) to:
