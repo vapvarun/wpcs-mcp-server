@@ -3,7 +3,147 @@
  */
 
 import { execSync } from 'child_process';
+import { existsSync } from 'fs';
 import { StagedFile } from './types.js';
+
+/**
+ * Common PHP installation paths by platform
+ */
+const PHP_PATHS = {
+  darwin: [
+    // Laravel Herd (most common for macOS WordPress devs)
+    `${process.env.HOME}/Library/Application Support/Herd/bin`,
+    // Homebrew Apple Silicon
+    '/opt/homebrew/opt/php@8.4/bin',
+    '/opt/homebrew/opt/php@8.3/bin',
+    '/opt/homebrew/opt/php@8.2/bin',
+    '/opt/homebrew/bin',
+    // Homebrew Intel
+    '/usr/local/opt/php@8.4/bin',
+    '/usr/local/opt/php@8.3/bin',
+    '/usr/local/opt/php@8.2/bin',
+    '/usr/local/bin',
+    // MAMP
+    '/Applications/MAMP/bin/php/php8.4.0/bin',
+    '/Applications/MAMP/bin/php/php8.3.0/bin',
+    '/Applications/MAMP/bin/php/php8.2.0/bin',
+    // Valet
+    `${process.env.HOME}/.valet/bin`,
+  ],
+  linux: [
+    '/usr/bin',
+    '/usr/local/bin',
+  ],
+  win32: [
+    'C:\\php',
+    'C:\\laragon\\bin\\php\\php-8.4',
+    'C:\\laragon\\bin\\php\\php-8.3',
+    'C:\\laragon\\bin\\php\\php-8.2',
+    'C:\\xampp\\php',
+  ],
+};
+
+/**
+ * Minimum required PHP version for WPCS dependencies
+ */
+const MIN_PHP_VERSION = '8.2.0';
+
+/**
+ * Find PHP binary in common locations
+ */
+export function findPhpPath(): string | null {
+  const platform = process.platform as keyof typeof PHP_PATHS;
+  const paths = PHP_PATHS[platform] || [];
+
+  for (const phpPath of paths) {
+    const phpBinary = platform === 'win32' ? `${phpPath}\\php.exe` : `${phpPath}/php`;
+    if (existsSync(phpBinary)) {
+      return phpPath;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check PHP version meets minimum requirements
+ */
+export function checkPhpVersion(): { valid: boolean; version?: string; path?: string; error?: string } {
+  try {
+    const versionOutput = execSync('php -v', { encoding: 'utf-8' });
+    const match = versionOutput.match(/PHP (\d+\.\d+\.\d+)/);
+
+    if (!match) {
+      return { valid: false, error: 'Could not determine PHP version' };
+    }
+
+    const version = match[1];
+    const phpPath = execSync('which php', { encoding: 'utf-8' }).trim();
+
+    // Compare versions
+    const [major, minor] = version.split('.').map(Number);
+    const [minMajor, minMinor] = MIN_PHP_VERSION.split('.').map(Number);
+
+    if (major < minMajor || (major === minMajor && minor < minMinor)) {
+      return {
+        valid: false,
+        version,
+        path: phpPath,
+        error: `PHP ${version} found at ${phpPath}, but version ${MIN_PHP_VERSION}+ is required. ` +
+               `Composer dependencies for WPCS need PHP ${MIN_PHP_VERSION} or higher.`,
+      };
+    }
+
+    return { valid: true, version, path: phpPath };
+  } catch {
+    return { valid: false, error: 'PHP not found in PATH' };
+  }
+}
+
+/**
+ * Setup PATH with PHP and Composer directories
+ */
+export function setupEnvironmentPath(): { phpPath?: string; composerPath?: string; warnings: string[] } {
+  const warnings: string[] = [];
+  const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+
+  // Composer bin path
+  const composerBin = process.platform === 'win32'
+    ? `${homeDir}\\AppData\\Roaming\\Composer\\vendor\\bin`
+    : `${homeDir}/.composer/vendor/bin`;
+
+  // Find PHP path if not already in PATH with correct version
+  let phpPath: string | undefined;
+  const phpCheck = checkPhpVersion();
+
+  if (!phpCheck.valid) {
+    // Try to find PHP in common locations
+    const foundPhpPath = findPhpPath();
+
+    if (foundPhpPath) {
+      phpPath = foundPhpPath;
+      process.env.PATH = `${foundPhpPath}:${process.env.PATH}`;
+
+      // Re-check version with new PATH
+      const recheck = checkPhpVersion();
+      if (!recheck.valid) {
+        warnings.push(`Found PHP at ${foundPhpPath} but it's version ${recheck.version || 'unknown'}. Need ${MIN_PHP_VERSION}+`);
+      }
+    } else {
+      warnings.push(phpCheck.error || 'PHP not found');
+      warnings.push('Common PHP locations checked: Herd, Homebrew, MAMP, system');
+    }
+  } else {
+    phpPath = phpCheck.path?.replace(/\/php$/, '');
+  }
+
+  // Add composer bin to PATH if not present
+  if (!process.env.PATH?.includes(composerBin)) {
+    process.env.PATH = `${composerBin}:${process.env.PATH}`;
+  }
+
+  return { phpPath, composerPath: composerBin, warnings };
+}
 
 /**
  * Get list of staged PHP files from git
@@ -43,6 +183,14 @@ export function checkPhpcsInstalled(): { installed: boolean; path?: string; erro
     const path = execSync('which phpcs', { encoding: 'utf-8' }).trim();
     return { installed: true, path };
   } catch {
+    // Try composer global bin directly
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    const composerPhpcs = `${homeDir}/.composer/vendor/bin/phpcs`;
+
+    if (existsSync(composerPhpcs)) {
+      return { installed: true, path: composerPhpcs };
+    }
+
     return {
       installed: false,
       error: 'phpcs not found in PATH. Install with: composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs',
@@ -96,6 +244,18 @@ export async function autoInstallWpcs(): Promise<{ success: boolean; message: st
   console.error('Auto-installing WPCS dependencies...');
 
   try {
+    // First check PHP version
+    const phpCheck = checkPhpVersion();
+    if (!phpCheck.valid) {
+      return {
+        success: false,
+        message: `Cannot auto-install: ${phpCheck.error}\n\n` +
+                 `To fix this, ensure PHP ${MIN_PHP_VERSION}+ is in your PATH.\n` +
+                 `For Herd users: Add to MCP env: "PATH": "$HOME/Library/Application Support/Herd/bin:..."\n` +
+                 `For Homebrew: Add to MCP env: "PATH": "/opt/homebrew/opt/php@8.4/bin:..."`,
+      };
+    }
+
     // Check if composer is available
     try {
       execSync('which composer', { encoding: 'utf-8' });
@@ -104,6 +264,19 @@ export async function autoInstallWpcs(): Promise<{ success: boolean; message: st
         success: false,
         message: 'Composer not found. Please install Composer first: https://getcomposer.org',
       };
+    }
+
+    // Check composer version
+    try {
+      const composerVersion = execSync('composer -V', { encoding: 'utf-8' });
+      if (composerVersion.includes('Composer version 1.')) {
+        return {
+          success: false,
+          message: 'Composer 1.x detected. Please upgrade to Composer 2.x: https://getcomposer.org/download/',
+        };
+      }
+    } catch {
+      // Continue anyway
     }
 
     // Step 1: Allow the composer installer plugin
@@ -157,6 +330,7 @@ export async function autoInstallWpcs(): Promise<{ success: boolean; message: st
 
 /**
  * Ensure PATH includes composer bin directory
+ * @deprecated Use setupEnvironmentPath() instead
  */
 export function ensureComposerInPath(): void {
   const homeDir = process.env.HOME || process.env.USERPROFILE || '';

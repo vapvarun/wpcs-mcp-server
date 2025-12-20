@@ -29,57 +29,266 @@ If you're developing WordPress plugins or themes, your code must follow [WordPre
 
 ---
 
-## Quick Start (3 Steps)
+## Requirements Checklist
+
+Before installing, ensure you have all requirements:
+
+| Requirement | Minimum Version | Check Command | Install Guide |
+|-------------|-----------------|---------------|---------------|
+| **Node.js** | 18+ | `node -v` | [nodejs.org](https://nodejs.org) |
+| **PHP** | 8.2+ | `php -v` | See PHP Setup below |
+| **Composer** | 2.0+ | `composer -V` | [getcomposer.org](https://getcomposer.org) |
+| **Claude Desktop or Claude Code** | Latest | `claude --version` | [claude.ai](https://claude.ai) |
+
+### PHP Setup by Platform
+
+<details>
+<summary><strong>macOS with Laravel Herd (Recommended)</strong></summary>
+
+```bash
+# Herd installs PHP at:
+# ~/Library/Application Support/Herd/bin/php
+
+# Verify Herd PHP
+~/Library/Application\ Support/Herd/bin/php -v
+# Should show PHP 8.2+
+
+# Herd also provides Composer at:
+# ~/Library/Application Support/Herd/bin/composer
+```
+
+</details>
+
+<details>
+<summary><strong>macOS with Homebrew</strong></summary>
+
+```bash
+# Install PHP 8.4
+brew install php@8.4
+
+# Add to PATH in ~/.zshrc
+export PATH="/opt/homebrew/opt/php@8.4/bin:$PATH"
+
+# Verify
+php -v
+```
+
+</details>
+
+<details>
+<summary><strong>macOS with MAMP</strong></summary>
+
+```bash
+# MAMP PHP location
+/Applications/MAMP/bin/php/php8.2.x/bin/php
+
+# Add to PATH in ~/.zshrc
+export PATH="/Applications/MAMP/bin/php/php8.2.x/bin:$PATH"
+```
+
+</details>
+
+<details>
+<summary><strong>Windows</strong></summary>
+
+```powershell
+# Install via Chocolatey
+choco install php --version=8.4
+
+# Or download from php.net and add to PATH
+```
+
+</details>
+
+<details>
+<summary><strong>Linux (Ubuntu/Debian)</strong></summary>
+
+```bash
+sudo apt update
+sudo apt install php8.2 php8.2-cli composer
+```
+
+</details>
+
+---
+
+## Quick Start
 
 ### Step 1: Clone & Build
 
 ```bash
 git clone https://github.com/vapvarun/wpcs-mcp-server.git ~/.mcp-servers/wpcs-mcp-server
 cd ~/.mcp-servers/wpcs-mcp-server
-npm install && npm run build
+npm install --include=dev && npm run build
 ```
 
-### Step 2: Add to Claude Desktop
+> **Important:** Use `npm install --include=dev` to ensure TypeScript compiler is available for building.
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
+### Step 2: Install WPCS Dependencies
+
+The server attempts auto-install, but for reliability, install manually:
+
+```bash
+# Allow the composer installer plugin
+composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
+
+# Install phpcs, WPCS, and PHPCompatibility
+composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs phpcompatibility/phpcompatibility-wp dealerdirect/phpcodesniffer-composer-installer
+
+# Verify installation
+~/.composer/vendor/bin/phpcs -i
+# Should show: WordPress, WordPress-Core, WordPress-Docs, WordPress-Extra, PHPCompatibility, PHPCompatibilityWP
+```
+
+### Step 3: Configure MCP Server
+
+Choose your setup method:
+
+---
+
+## Configuration Options
+
+### For Claude Code CLI (Recommended)
+
+**Option A: Using CLI Command (Global)**
+
+```bash
+claude mcp add wpcs --scope user -- node ~/.mcp-servers/wpcs-mcp-server/build/index.js
+```
+
+Then manually add the PATH environment in `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "wpcs": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"],
+      "env": {
+        "PATH": "/Users/YOUR_USERNAME/Library/Application Support/Herd/bin:/Users/YOUR_USERNAME/.composer/vendor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+**Option B: Manual Configuration (Global)**
+
+Add to `~/.claude.json` under the `mcpServers` key at root level:
+
+```json
+{
+  "mcpServers": {
+    "wpcs": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"],
+      "env": {
+        "PATH": "/Users/YOUR_USERNAME/Library/Application Support/Herd/bin:/Users/YOUR_USERNAME/.composer/vendor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+**Option C: Project-Level Configuration**
+
+Add to `~/.claude.json` under a specific project:
+
+```json
+{
+  "projects": {
+    "/path/to/your/wordpress-project": {
+      "mcpServers": {
+        "wpcs": {
+          "type": "stdio",
+          "command": "node",
+          "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"],
+          "env": {
+            "PATH": "/Users/YOUR_USERNAME/Library/Application Support/Herd/bin:/Users/YOUR_USERNAME/.composer/vendor/bin:/usr/local/bin:/usr/bin:/bin"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### For Claude Desktop
+
+**macOS** - Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "wpcs": {
       "command": "node",
-      "args": ["~/.mcp-servers/wpcs-mcp-server/build/index.js"]
+      "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"],
+      "env": {
+        "PATH": "/Users/YOUR_USERNAME/Library/Application Support/Herd/bin:/Users/YOUR_USERNAME/.composer/vendor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      }
     }
   }
 }
 ```
 
-### Step 3: Restart Claude Desktop
+**Windows** - Edit `%APPDATA%\Claude\claude_desktop_config.json`:
 
-That's it! On first run, the server will **auto-install phpcs and WPCS** if not already installed.
+```json
+{
+  "mcpServers": {
+    "wpcs": {
+      "command": "node",
+      "args": ["C:\\Users\\YOUR_USERNAME\\.mcp-servers\\wpcs-mcp-server\\build\\index.js"],
+      "env": {
+        "PATH": "C:\\php;C:\\Users\\YOUR_USERNAME\\AppData\\Roaming\\Composer\\vendor\\bin;%PATH%"
+      }
+    }
+  }
+}
+```
 
 ---
 
-## Requirements
+## PATH Configuration by Setup
 
-| Requirement | Why |
-|-------------|-----|
-| **Composer** | To auto-install phpcs/WPCS ([Install](https://getcomposer.org)) |
-| **Node.js 18+** | To run the MCP server |
-| **Claude Desktop or Claude Code** | To use the tools |
+Choose the correct PATH based on your PHP installation:
+
+| PHP Setup | PATH Value |
+|-----------|------------|
+| **Herd (macOS)** | `~/Library/Application Support/Herd/bin:~/.composer/vendor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` |
+| **Homebrew (macOS)** | `/opt/homebrew/opt/php@8.4/bin:~/.composer/vendor/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` |
+| **MAMP (macOS)** | `/Applications/MAMP/bin/php/php8.2.x/bin:~/.composer/vendor/bin:/usr/local/bin:/usr/bin:/bin` |
+| **System PHP (Linux)** | `~/.composer/vendor/bin:/usr/local/bin:/usr/bin:/bin` |
+| **Windows** | `C:\php;C:\Users\YOU\AppData\Roaming\Composer\vendor\bin` |
+
+> **Important:** Replace `~` with your full home path (e.g., `/Users/yourname`) in JSON configs.
 
 ---
 
-## What Gets Auto-Installed
+## Step 4: Verify Installation
 
-When you first run the server, it automatically installs (if missing):
+```bash
+# Check MCP server status
+claude mcp list
 
-- **PHP_CodeSniffer** - The code analysis tool
-- **WordPress Coding Standards** - The WordPress ruleset
-- **PHPCompatibilityWP** - PHP version compatibility checks
-- **phpcodesniffer-composer-installer** - Auto-configures paths
+# Should show:
+# wpcs: node ~/.mcp-servers/wpcs-mcp-server/build/index.js - ✓ Connected
+```
 
-No manual setup needed!
+### Test the Server Manually
+
+```bash
+cd ~/.mcp-servers/wpcs-mcp-server
+PATH="YOUR_PHP_PATH:$HOME/.composer/vendor/bin:$PATH" node build/index.js
+
+# Should output:
+# Starting WPCS MCP Server...
+# phpcs path: /Users/you/.composer/vendor/bin/phpcs
+# Available standards: ... WordPress, WordPress-Core, WordPress-Docs, WordPress-Extra, PHPCompatibility ...
+# WPCS MCP Server running on stdio
+```
 
 ---
 
@@ -92,7 +301,7 @@ No manual setup needed!
 | `wpcs_check_file` | Check a single PHP file |
 | `wpcs_check_directory` | Check all PHP files in a directory |
 | `wpcs_fix_file` | Auto-fix WPCS violations in a file |
-| `wpcs_check_php_compatibility` | **NEW!** Check PHP 8.1/8.2/8.3/8.4 compatibility |
+| `wpcs_check_php_compatibility` | Check PHP 8.1/8.2/8.3/8.4 compatibility |
 
 ---
 
@@ -171,64 +380,13 @@ Check if your code works with PHP 8.1, 8.2, 8.3, and 8.4:
 "8.1-8.4"  → Check PHP 8.1 through 8.4 compatibility
 ```
 
-WordPress.org requires **PHP 7.4+** minimum, so use `"7.4-"` to ensure broad compatibility
+WordPress.org requires **PHP 7.4+** minimum, so use `"7.4-"` to ensure broad compatibility.
 
 ---
 
-## Configuration Options
+## Add Tool Permissions (Claude Code)
 
-### For Claude Desktop (macOS)
-
-```json
-// ~/Library/Application Support/Claude/claude_desktop_config.json
-{
-  "mcpServers": {
-    "wpcs": {
-      "command": "node",
-      "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"],
-      "env": {
-        "PATH": "/Users/YOUR_USERNAME/.composer/vendor/bin:/usr/local/bin:/usr/bin:/bin"
-      }
-    }
-  }
-}
-```
-
-### For Claude Desktop (Windows)
-
-```json
-// %APPDATA%\Claude\claude_desktop_config.json
-{
-  "mcpServers": {
-    "wpcs": {
-      "command": "node",
-      "args": ["C:\\Users\\YOUR_USERNAME\\.mcp-servers\\wpcs-mcp-server\\build\\index.js"]
-    }
-  }
-}
-```
-
-### For Claude Code CLI
-
-Add MCP server to `~/.claude.json`:
-
-```json
-{
-  "projects": {
-    "/Users/YOUR_USERNAME": {
-      "mcpServers": {
-        "wpcs": {
-          "type": "stdio",
-          "command": "node",
-          "args": ["/Users/YOUR_USERNAME/.mcp-servers/wpcs-mcp-server/build/index.js"]
-        }
-      }
-    }
-  }
-}
-```
-
-Add permissions to `~/.claude/settings.json`:
+Add to `~/.claude/settings.json`:
 
 ```json
 {
@@ -238,7 +396,8 @@ Add permissions to `~/.claude/settings.json`:
       "mcp__wpcs__wpcs_check_file",
       "mcp__wpcs__wpcs_check_directory",
       "mcp__wpcs__wpcs_fix_file",
-      "mcp__wpcs__wpcs_pre_commit"
+      "mcp__wpcs__wpcs_pre_commit",
+      "mcp__wpcs__wpcs_check_php_compatibility"
     ]
   }
 }
@@ -291,39 +450,67 @@ Add to `~/.claude/settings.json`:
 
 ## Troubleshooting
 
-### "phpcs not found"
+### "Failed to connect" in `claude mcp list`
 
-The server should auto-install, but if it fails:
+**Most common cause:** Wrong PHP version in PATH.
 
 ```bash
-composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
-composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer
+# Check which PHP the MCP server sees
+cd ~/.mcp-servers/wpcs-mcp-server
+PATH="YOUR_CONFIG_PATH" node build/index.js 2>&1 | head -5
+
+# If you see "PHP Fatal error: Composer detected issues... require PHP >= 8.2"
+# Your PATH doesn't include PHP 8.2+
 ```
 
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
+**Fix:** Update the PATH in your MCP config to include your PHP 8.2+ binary directory FIRST.
+
+### "phpcs not found"
 
 ```bash
-export PATH="$HOME/.composer/vendor/bin:$PATH"
+# Install manually
+composer global config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
+composer global require squizlabs/php_codesniffer wp-coding-standards/wpcs phpcompatibility/phpcompatibility-wp dealerdirect/phpcodesniffer-composer-installer
+
+# Verify
+~/.composer/vendor/bin/phpcs --version
 ```
 
 ### "WordPress standard not found"
 
 ```bash
-phpcs -i  # Should list WordPress, WordPress-Core, WordPress-Docs, WordPress-Extra
+# Check available standards
+~/.composer/vendor/bin/phpcs -i
+
+# If WordPress not listed, reinstall:
+composer global remove wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer
+composer global require wp-coding-standards/wpcs dealerdirect/phpcodesniffer-composer-installer
 ```
 
-If not listed:
+### Build fails with "tsc: command not found"
 
 ```bash
-phpcs --config-set installed_paths ~/.composer/vendor/wp-coding-standards/wpcs
+cd ~/.mcp-servers/wpcs-mcp-server
+rm -rf node_modules
+npm install --include=dev
+npm run build
 ```
 
-### MCP server not loading
+### "Auto-install failed" on server startup
 
-1. Verify the path in your config is correct
+This happens when:
+1. PHP version is too old (need 8.2+)
+2. Composer version is too old (need 2.0+)
+3. Network issues
+
+**Fix:** Install dependencies manually (see Step 2 above).
+
+### MCP server not loading in Claude Desktop
+
+1. Verify the path in your config uses absolute paths (no `~`)
 2. Ensure you ran `npm run build`
-3. Restart Claude Desktop or Claude Code
-4. Check logs: `node ~/.mcp-servers/wpcs-mcp-server/build/index.js`
+3. Restart Claude Desktop completely (quit and reopen)
+4. Check the path exists: `ls -la ~/.mcp-servers/wpcs-mcp-server/build/index.js`
 
 ---
 
@@ -338,6 +525,24 @@ npm run build
 # Watch mode for development
 npm run dev
 ```
+
+---
+
+## Complete Setup Checklist
+
+Use this checklist to ensure everything is configured correctly:
+
+- [ ] **Node.js 18+** installed (`node -v`)
+- [ ] **PHP 8.2+** installed and in PATH (`php -v`)
+- [ ] **Composer 2.0+** installed (`composer -V`)
+- [ ] **Repository cloned** to `~/.mcp-servers/wpcs-mcp-server`
+- [ ] **Built with dev dependencies** (`npm install --include=dev && npm run build`)
+- [ ] **WPCS installed globally** via Composer
+- [ ] **phpcs shows WordPress standards** (`~/.composer/vendor/bin/phpcs -i`)
+- [ ] **MCP config added** to `~/.claude.json` or Claude Desktop config
+- [ ] **PATH includes PHP binary directory** in MCP env config
+- [ ] **PATH includes composer/vendor/bin** in MCP env config
+- [ ] **Server shows Connected** (`claude mcp list`)
 
 ---
 
