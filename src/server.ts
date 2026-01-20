@@ -14,6 +14,17 @@ import { execSync } from 'child_process';
 import { PhpcsRunner } from './phpcs-runner.js';
 import { tools } from './tools.js';
 import {
+  detectProjectType,
+  validatePluginHeaders,
+  validateThemeHeaders,
+  validateReadme,
+  validateTextDomain,
+  ValidationResult,
+} from './validators.js';
+import { runQualityChecks } from './quality-checker.js';
+import { runFrontendChecks } from './frontend-checker.js';
+import { runCodeAnalysis } from './code-analyzer.js';
+import {
   getStagedPhpFiles,
   checkPhpcsInstalled,
   checkWpcsInstalled,
@@ -88,6 +99,28 @@ export class WpcsMcpServer {
               toolArgs.php_version as string | undefined,
               toolArgs.working_dir as string | undefined
             );
+
+          case 'wpcs_quality_check':
+            return this.qualityCheck(toolArgs.path as string);
+
+          case 'wpcs_validate_project':
+            return this.validateProject(
+              toolArgs.path as string,
+              toolArgs.text_domain as string | undefined
+            );
+
+          case 'wpcs_full_check':
+            return await this.fullCheck(
+              toolArgs.path as string,
+              toolArgs.php_version as string | undefined,
+              toolArgs.text_domain as string | undefined
+            );
+
+          case 'wpcs_frontend_check':
+            return this.frontendCheck(toolArgs.path as string);
+
+          case 'wpcs_code_analysis':
+            return this.codeAnalysis(toolArgs.path as string);
 
           default:
             return this.errorResult(`Unknown tool: ${name}`);
@@ -337,6 +370,497 @@ export class WpcsMcpServer {
     } catch (error: unknown) {
       const err = error as { message?: string };
       return this.errorResult(`PHP compatibility check failed: ${err.message || 'Unknown error'}`);
+    }
+  }
+
+  private qualityCheck(projectPath: string): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const result = runQualityChecks(projectPath);
+
+    let message = `QUALITY CHECK\n${'='.repeat(50)}\n\n`;
+    message += `Path: ${projectPath}\n`;
+    message += `Files analyzed: ${result.issues.length > 0 ? 'Multiple' : '0'}\n\n`;
+
+    if (result.issues.length === 0) {
+      message += `✓ No quality issues found!\n`;
+      return this.successResult(message);
+    }
+
+    // Group by category
+    const byCategory = new Map<string, typeof result.issues>();
+    for (const issue of result.issues) {
+      const existing = byCategory.get(issue.category) || [];
+      existing.push(issue);
+      byCategory.set(issue.category, existing);
+    }
+
+    const categoryLabels: Record<string, string> = {
+      hooks: '1. HOOK USAGE',
+      performance: '2. PERFORMANCE',
+      accessibility: '3. ACCESSIBILITY',
+      security: '4. SECURITY',
+    };
+
+    for (const [category, issues] of byCategory) {
+      message += `${categoryLabels[category] || category.toUpperCase()}\n${'-'.repeat(40)}\n`;
+
+      for (const issue of issues.slice(0, 15)) {
+        const prefix = issue.type === 'error' ? '[ERROR]' : '[WARN]';
+        message += `${prefix} ${issue.file}:${issue.line}\n`;
+        message += `  ${issue.message}\n`;
+        message += `  Code: ${issue.code}\n\n`;
+      }
+
+      if (issues.length > 15) {
+        message += `  ... and ${issues.length - 15} more ${category} issues\n\n`;
+      }
+    }
+
+    // Summary
+    message += `${'='.repeat(50)}\n`;
+    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)\n`;
+    message += `By category: ${Object.entries(result.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n`;
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: result.summary.errors > 0,
+    };
+  }
+
+  private frontendCheck(projectPath: string): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const result = runFrontendChecks(projectPath);
+
+    let message = `FRONTEND CONSISTENCY CHECK\n${'='.repeat(50)}\n\n`;
+    message += `Path: ${projectPath}\n\n`;
+
+    if (result.issues.length === 0) {
+      message += `✓ No frontend consistency issues found!\n`;
+      return this.successResult(message);
+    }
+
+    // Group by category
+    const byCategory = new Map<string, typeof result.issues>();
+    for (const issue of result.issues) {
+      const existing = byCategory.get(issue.category) || [];
+      existing.push(issue);
+      byCategory.set(issue.category, existing);
+    }
+
+    const categoryLabels: Record<string, string> = {
+      html: '1. HTML ISSUES',
+      css: '2. CSS ISSUES',
+      consistency: '3. CONSISTENCY',
+      responsive: '4. RESPONSIVE DESIGN',
+      naming: '5. FILE NAMING',
+    };
+
+    for (const [category, issues] of byCategory) {
+      message += `${categoryLabels[category] || category.toUpperCase()}\n${'-'.repeat(40)}\n`;
+
+      for (const issue of issues.slice(0, 10)) {
+        const prefix = issue.type === 'error' ? '[ERROR]' : '[WARN]';
+        message += `${prefix} ${issue.file}${issue.line > 0 ? `:${issue.line}` : ''}\n`;
+        message += `  ${issue.message}\n`;
+        message += `  Code: ${issue.code}\n\n`;
+      }
+
+      if (issues.length > 10) {
+        message += `  ... and ${issues.length - 10} more ${category} issues\n\n`;
+      }
+    }
+
+    // Patterns detected
+    if (result.patterns.classNaming.length > 0 || result.patterns.colorFormats.length > 0) {
+      message += `PATTERNS DETECTED\n${'-'.repeat(40)}\n`;
+
+      const classCount = result.patterns.classNaming.reduce((acc, n) => {
+        acc[n] = (acc[n] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      if (Object.keys(classCount).length > 0) {
+        message += `Class naming: ${Object.entries(classCount).map(([s, c]) => `${s}(${c})`).join(', ')}\n`;
+      }
+
+      const colorCount = result.patterns.colorFormats.reduce((acc, c) => {
+        acc[c] = (acc[c] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      if (Object.keys(colorCount).length > 0) {
+        message += `Color formats: ${Object.entries(colorCount).map(([f, c]) => `${f}(${c})`).join(', ')}\n`;
+      }
+
+      const unitCount = result.patterns.units.reduce((acc, u) => {
+        acc[u] = (acc[u] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      if (Object.keys(unitCount).length > 0) {
+        message += `CSS units: ${Object.entries(unitCount).map(([u, c]) => `${u}(${c})`).join(', ')}\n`;
+      }
+      message += '\n';
+    }
+
+    // Summary
+    message += `${'='.repeat(50)}\n`;
+    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)\n`;
+    message += `By category: ${Object.entries(result.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n`;
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: result.summary.errors > 0,
+    };
+  }
+
+  private codeAnalysis(projectPath: string): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const result = runCodeAnalysis(projectPath);
+
+    let message = `CODE ANALYSIS (Dead Code Detection)\n${'='.repeat(50)}\n\n`;
+    message += `Path: ${projectPath}\n`;
+    message += `Functions: ${result.stats.totalFunctions} | Classes: ${result.stats.totalClasses} | Hooks: ${result.stats.totalHooks}\n\n`;
+
+    if (result.issues.length === 0) {
+      message += `✓ No dead code or disconnected functions found!\n`;
+      return this.successResult(message);
+    }
+
+    // Group by category
+    const byCategory = new Map<string, typeof result.issues>();
+    for (const issue of result.issues) {
+      const existing = byCategory.get(issue.category) || [];
+      existing.push(issue);
+      byCategory.set(issue.category, existing);
+    }
+
+    const categoryLabels: Record<string, string> = {
+      undefined: '1. UNDEFINED FUNCTIONS (called but not found)',
+      unused: '2. UNUSED CODE (defined but never called)',
+      orphan: '3. ORPHAN HOOKS (callback doesn\'t exist)',
+      duplicate: '4. DUPLICATES',
+    };
+
+    for (const [category, issues] of byCategory) {
+      message += `${categoryLabels[category] || category.toUpperCase()}\n${'-'.repeat(40)}\n`;
+
+      for (const issue of issues.slice(0, 15)) {
+        const prefix = issue.type === 'error' ? '[ERROR]' : '[WARN]';
+        message += `${prefix} ${issue.file}:${issue.line}\n`;
+        message += `  ${issue.message}\n\n`;
+      }
+
+      if (issues.length > 15) {
+        message += `  ... and ${issues.length - 15} more ${category} issues\n\n`;
+      }
+    }
+
+    // Summary
+    message += `${'='.repeat(50)}\n`;
+    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)\n`;
+    message += `By category: ${Object.entries(result.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n`;
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: result.summary.errors > 0,
+    };
+  }
+
+  private validateProject(
+    projectPath: string,
+    textDomain?: string
+  ): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const projectType = detectProjectType(projectPath);
+    let message = `PROJECT VALIDATION\n${'='.repeat(40)}\n\n`;
+    message += `Path: ${projectPath}\n`;
+    message += `Type: ${projectType}\n\n`;
+
+    let hasErrors = false;
+
+    // 1. Validate headers
+    message += `1. HEADERS\n${'-'.repeat(30)}\n`;
+    let headerResult: ValidationResult;
+
+    if (projectType === 'plugin') {
+      headerResult = validatePluginHeaders(projectPath);
+    } else if (projectType === 'theme') {
+      headerResult = validateThemeHeaders(projectPath);
+    } else {
+      message += `⚠ Could not detect project type\n\n`;
+      headerResult = { valid: false, errors: ['Unknown project type'], warnings: [], info: {} };
+    }
+
+    if (headerResult.valid) {
+      message += `✓ Headers valid\n`;
+    } else {
+      hasErrors = true;
+      message += `✗ Header issues found\n`;
+    }
+
+    for (const error of headerResult.errors) {
+      message += `  [ERROR] ${error}\n`;
+    }
+    for (const warning of headerResult.warnings) {
+      message += `  [WARN] ${warning}\n`;
+    }
+
+    if (Object.keys(headerResult.info).length > 0) {
+      message += `  Info:\n`;
+      for (const [key, value] of Object.entries(headerResult.info)) {
+        message += `    ${key}: ${value}\n`;
+      }
+    }
+    message += '\n';
+
+    // 2. Validate readme
+    message += `2. README\n${'-'.repeat(30)}\n`;
+    const readmeResult = validateReadme(projectPath);
+
+    if (readmeResult.valid) {
+      message += `✓ readme.txt valid\n`;
+    } else {
+      hasErrors = true;
+      message += `✗ readme.txt issues found\n`;
+    }
+
+    for (const error of readmeResult.errors) {
+      message += `  [ERROR] ${error}\n`;
+    }
+    for (const warning of readmeResult.warnings) {
+      message += `  [WARN] ${warning}\n`;
+    }
+    message += '\n';
+
+    // 3. Validate text domain
+    message += `3. TEXT DOMAIN (i18n)\n${'-'.repeat(30)}\n`;
+    const i18nResult = validateTextDomain(projectPath, textDomain);
+
+    if (i18nResult.warnings.length === 0 && i18nResult.errors.length === 0) {
+      message += `✓ Text domain consistent: ${i18nResult.info['Expected Text Domain']}\n`;
+    } else {
+      message += `⚠ Text domain issues:\n`;
+    }
+
+    for (const error of i18nResult.errors) {
+      message += `  [ERROR] ${error}\n`;
+    }
+    for (const warning of i18nResult.warnings.slice(0, 10)) {
+      message += `  [WARN] ${warning}\n`;
+    }
+    if (i18nResult.warnings.length > 10) {
+      message += `  ... and ${i18nResult.warnings.length - 10} more\n`;
+    }
+    message += '\n';
+
+    // Summary
+    message += `${'='.repeat(40)}\n`;
+    if (hasErrors) {
+      message += `✗ Project has validation errors. Fix before WordPress.org submission.`;
+    } else {
+      message += `✓ Project validation passed.`;
+    }
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: hasErrors,
+    };
+  }
+
+  private async fullCheck(
+    projectPath: string,
+    phpVersion?: string,
+    textDomain?: string
+  ): Promise<CallToolResult> {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const projectType = detectProjectType(projectPath);
+    const version = phpVersion || '7.4-';
+
+    let message = `FULL WORDPRESS CHECK\n${'='.repeat(50)}\n\n`;
+    message += `Path: ${projectPath}\n`;
+    message += `Type: ${projectType}\n`;
+    message += `PHP Version: ${version}\n\n`;
+
+    let totalErrors = 0;
+    let totalWarnings = 0;
+
+    // 1. WPCS Check
+    message += `1. WORDPRESS CODING STANDARDS\n${'-'.repeat(40)}\n`;
+    const wpcsResult = await this.phpcsRunner.check(projectPath, undefined);
+
+    if (wpcsResult.success) {
+      message += `✓ PASSED\n\n`;
+    } else {
+      totalErrors += wpcsResult.totalErrors;
+      totalWarnings += wpcsResult.totalWarnings;
+      message += `✗ ${wpcsResult.totalErrors} error(s), ${wpcsResult.totalWarnings} warning(s)\n`;
+      message += `${wpcsResult.summary}\n\n`;
+    }
+
+    // 2. PHP Compatibility
+    message += `2. PHP COMPATIBILITY (${version})\n${'-'.repeat(40)}\n`;
+    const compatResult = await this.runPhpCompatibility(projectPath, version);
+
+    if (compatResult.errors === 0 && compatResult.warnings === 0) {
+      message += `✓ PASSED\n\n`;
+    } else {
+      totalErrors += compatResult.errors;
+      totalWarnings += compatResult.warnings;
+      message += `✗ ${compatResult.errors} error(s), ${compatResult.warnings} warning(s)\n\n`;
+    }
+
+    // 3. Project Validation (headers, readme, i18n)
+    message += `3. PROJECT VALIDATION\n${'-'.repeat(40)}\n`;
+
+    // Headers
+    let headerResult: ValidationResult;
+    if (projectType === 'plugin') {
+      headerResult = validatePluginHeaders(projectPath);
+    } else if (projectType === 'theme') {
+      headerResult = validateThemeHeaders(projectPath);
+    } else {
+      headerResult = { valid: false, errors: ['Unknown project type'], warnings: [], info: {} };
+    }
+
+    if (headerResult.valid) {
+      message += `✓ Headers: Valid\n`;
+    } else {
+      totalErrors += headerResult.errors.length;
+      message += `✗ Headers: ${headerResult.errors.length} error(s)\n`;
+      for (const err of headerResult.errors) {
+        message += `    ${err}\n`;
+      }
+    }
+    totalWarnings += headerResult.warnings.length;
+
+    // Readme
+    const readmeResult = validateReadme(projectPath);
+    if (readmeResult.valid) {
+      message += `✓ Readme: Valid\n`;
+    } else {
+      totalErrors += readmeResult.errors.length;
+      message += `✗ Readme: ${readmeResult.errors.length} error(s)\n`;
+      for (const err of readmeResult.errors) {
+        message += `    ${err}\n`;
+      }
+    }
+    totalWarnings += readmeResult.warnings.length;
+
+    // i18n
+    const i18nResult = validateTextDomain(projectPath, textDomain);
+    if (i18nResult.warnings.length === 0) {
+      message += `✓ i18n: Consistent\n`;
+    } else {
+      totalWarnings += i18nResult.warnings.length;
+      message += `⚠ i18n: ${i18nResult.warnings.length} warning(s)\n`;
+    }
+
+    message += '\n';
+
+    // 4. Quality Check (hooks, performance, accessibility, security)
+    message += `4. QUALITY CHECK\n${'-'.repeat(40)}\n`;
+    const qualityResult = runQualityChecks(projectPath);
+
+    if (qualityResult.summary.errors === 0 && qualityResult.summary.warnings === 0) {
+      message += `✓ PASSED\n\n`;
+    } else {
+      totalErrors += qualityResult.summary.errors;
+      totalWarnings += qualityResult.summary.warnings;
+      message += `✗ ${qualityResult.summary.errors} error(s), ${qualityResult.summary.warnings} warning(s)\n`;
+      message += `  Categories: ${Object.entries(qualityResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
+    }
+
+    // 5. Frontend Consistency (HTML, CSS, responsive)
+    message += `5. FRONTEND CONSISTENCY\n${'-'.repeat(40)}\n`;
+    const frontendResult = runFrontendChecks(projectPath);
+
+    if (frontendResult.summary.errors === 0 && frontendResult.summary.warnings === 0) {
+      message += `✓ PASSED\n\n`;
+    } else {
+      totalErrors += frontendResult.summary.errors;
+      totalWarnings += frontendResult.summary.warnings;
+      message += `✗ ${frontendResult.summary.errors} error(s), ${frontendResult.summary.warnings} warning(s)\n`;
+      message += `  Categories: ${Object.entries(frontendResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
+    }
+
+    // 6. Code Analysis (dead code, unused functions)
+    message += `6. CODE ANALYSIS\n${'-'.repeat(40)}\n`;
+    const codeResult = runCodeAnalysis(projectPath);
+
+    if (codeResult.summary.errors === 0 && codeResult.summary.warnings === 0) {
+      message += `✓ PASSED\n`;
+      message += `  Functions: ${codeResult.stats.totalFunctions} | Classes: ${codeResult.stats.totalClasses} | Hooks: ${codeResult.stats.totalHooks}\n\n`;
+    } else {
+      totalErrors += codeResult.summary.errors;
+      totalWarnings += codeResult.summary.warnings;
+      message += `✗ ${codeResult.summary.errors} error(s), ${codeResult.summary.warnings} warning(s)\n`;
+      message += `  Categories: ${Object.entries(codeResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
+    }
+
+    // Summary
+    message += `${'='.repeat(50)}\n`;
+    message += `SUMMARY: ${totalErrors} error(s), ${totalWarnings} warning(s)\n`;
+    message += `${'='.repeat(50)}\n\n`;
+
+    if (totalErrors === 0) {
+      message += `✓ READY FOR SUBMISSION\n`;
+      message += `This ${projectType} passes all checks.`;
+    } else {
+      message += `✗ NOT READY\n`;
+      message += `Fix ${totalErrors} error(s) before WordPress.org submission.`;
+    }
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: totalErrors > 0,
+    };
+  }
+
+  private async runPhpCompatibility(
+    target: string,
+    phpVersion: string
+  ): Promise<{ errors: number; warnings: number }> {
+    const excludePatterns = ['vendor/*', 'node_modules/*', 'build/*', 'dist/*', '.git/*'];
+    const command = `phpcs --standard=PHPCompatibilityWP --runtime-set testVersion ${phpVersion} --report=json --ignore=${excludePatterns.join(',')} "${target}"`;
+
+    try {
+      execSync(command, { encoding: 'utf-8', stdio: 'pipe' });
+      return { errors: 0, warnings: 0 };
+    } catch (error: unknown) {
+      const execError = error as { stdout?: string };
+      const output = execError.stdout || '';
+
+      if (!output) {
+        return { errors: 0, warnings: 0 };
+      }
+
+      try {
+        const result = JSON.parse(output);
+        let errors = 0;
+        let warnings = 0;
+
+        for (const data of Object.values(result.files) as { errors: number; warnings: number }[]) {
+          errors += data.errors;
+          warnings += data.warnings;
+        }
+
+        return { errors, warnings };
+      } catch {
+        return { errors: 0, warnings: 0 };
+      }
     }
   }
 

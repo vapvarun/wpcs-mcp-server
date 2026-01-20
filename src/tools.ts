@@ -119,4 +119,92 @@ export const tools: Tool[] = [
       required: ['target'],
     },
   },
+  {
+    name: 'wpcs_quality_check',
+    description:
+      'Advanced quality checks: hook usage, enqueue timing, blocking calls, accessibility (alt, labels, ARIA), security patterns, large files. Catches issues WPCS misses.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_validate_project',
+    description:
+      'Validate WordPress plugin or theme project. Checks headers, readme.txt, text domain, and required files. Auto-detects project type.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+        text_domain: {
+          type: 'string',
+          description: 'Expected text domain (defaults to folder name)',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_full_check',
+    description:
+      'Run comprehensive WordPress code check: WPCS + PHP Compatibility + Project Validation (headers, readme, i18n). Use before release or WordPress.org submission.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+        php_version: {
+          type: 'string',
+          description: 'PHP version for compatibility check (default: "7.4-")',
+          default: '7.4-',
+        },
+        text_domain: {
+          type: 'string',
+          description: 'Expected text domain (defaults to folder name)',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_frontend_check',
+    description:
+      'Check HTML/CSS/JS consistency: file naming (kebab-case, snake_case), class naming (BEM), vendor prefixes, color formats, responsive design (media queries, touch targets), !important overuse.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_code_analysis',
+    description:
+      'Detect dead code: unused functions, undefined functions, orphan hook callbacks, unused classes, duplicate definitions. Finds disconnected code.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+      },
+      required: ['path'],
+    },
+  },
 ];
