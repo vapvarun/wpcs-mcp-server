@@ -1,5 +1,5 @@
 /**
- * WPCS MCP Server - Main Implementation
+ * WPCS MCP Server - Main Implementation (v2.0.0)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -19,18 +19,23 @@ import {
   validateThemeHeaders,
   validateReadme,
   validateTextDomain,
-  ValidationResult,
+  validatePotFile,
+  validateStableTagMatch,
+  validateGplLicense,
+  validateUninstallCleanup,
 } from './validators.js';
 import { runQualityChecks } from './quality-checker.js';
 import { runFrontendChecks } from './frontend-checker.js';
 import { runCodeAnalysis } from './code-analyzer.js';
+import { runSubmissionChecks } from './submission-checker.js';
+import { generateReport, buildSection } from './report-generator.js';
 import {
   getStagedPhpFiles,
   checkPhpcsInstalled,
   checkWpcsInstalled,
   formatPath,
 } from './utils.js';
-import { WpcsCheckResult } from './types.js';
+import type { WpcsCheckResult, ValidationResult, ReportFormat } from './types.js';
 
 export class WpcsMcpServer {
   private server: Server;
@@ -40,7 +45,7 @@ export class WpcsMcpServer {
     this.server = new Server(
       {
         name: 'wpcs-mcp-server',
-        version: '1.0.0',
+        version: '2.0.0',
       },
       {
         capabilities: {
@@ -121,6 +126,22 @@ export class WpcsMcpServer {
 
           case 'wpcs_code_analysis':
             return this.codeAnalysis(toolArgs.path as string);
+
+          case 'wpcs_submission_check':
+            return this.submissionCheck(toolArgs.path as string);
+
+          case 'wpcs_generate_report':
+            return this.reportGenerate(
+              toolArgs.path as string,
+              (toolArgs.format as ReportFormat) || 'summary',
+              toolArgs.output_file as string | undefined
+            );
+
+          case 'wpcs_phpstan_check':
+            return await this.phpstanCheck(
+              toolArgs.path as string,
+              (toolArgs.level as number) || 5
+            );
 
           default:
             return this.errorResult(`Unknown tool: ${name}`);
@@ -402,6 +423,7 @@ export class WpcsMcpServer {
       performance: '2. PERFORMANCE',
       accessibility: '3. ACCESSIBILITY',
       security: '4. SECURITY',
+      deprecated: '5. DEPRECATED FUNCTIONS',
     };
 
     for (const [category, issues] of byCategory) {
@@ -663,6 +685,52 @@ export class WpcsMcpServer {
     }
     message += '\n';
 
+    // 4. Stable tag match (v2.0)
+    message += `4. STABLE TAG\n${'-'.repeat(30)}\n`;
+    const stableResult = validateStableTagMatch(projectPath);
+    if (stableResult.valid) {
+      message += `✓ Stable tag matches plugin version\n`;
+    } else {
+      hasErrors = true;
+      for (const error of stableResult.errors) message += `  [ERROR] ${error}\n`;
+    }
+    for (const warning of stableResult.warnings) message += `  [WARN] ${warning}\n`;
+    message += '\n';
+
+    // 5. GPL License (v2.0)
+    message += `5. LICENSE\n${'-'.repeat(30)}\n`;
+    const gplResult = validateGplLicense(projectPath);
+    if (gplResult.valid) {
+      message += `✓ GPL license found\n`;
+    } else {
+      hasErrors = true;
+      for (const error of gplResult.errors) message += `  [ERROR] ${error}\n`;
+    }
+    for (const warning of gplResult.warnings) message += `  [WARN] ${warning}\n`;
+    message += '\n';
+
+    // 6. Uninstall cleanup (v2.0)
+    message += `6. UNINSTALL CLEANUP\n${'-'.repeat(30)}\n`;
+    const uninstallResult = validateUninstallCleanup(projectPath);
+    if (uninstallResult.warnings.length === 0) {
+      message += `✓ Uninstall mechanism found\n`;
+    } else {
+      for (const warning of uninstallResult.warnings) message += `  [WARN] ${warning}\n`;
+    }
+    message += '\n';
+
+    // 7. POT file (v2.0)
+    message += `7. TRANSLATION FILE\n${'-'.repeat(30)}\n`;
+    const potResult = validatePotFile(projectPath, textDomain);
+    if (potResult.valid && potResult.warnings.length === 0) {
+      message += `✓ POT file valid\n`;
+    } else {
+      if (!potResult.valid) hasErrors = true;
+      for (const error of potResult.errors) message += `  [ERROR] ${error}\n`;
+      for (const warning of potResult.warnings) message += `  [WARN] ${warning}\n`;
+    }
+    message += '\n';
+
     // Summary
     message += `${'='.repeat(40)}\n`;
     if (hasErrors) {
@@ -810,6 +878,19 @@ export class WpcsMcpServer {
       message += `  Categories: ${Object.entries(codeResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
     }
 
+    // 7. Submission Check (v2.0)
+    message += `7. SUBMISSION READINESS\n${'-'.repeat(40)}\n`;
+    const submissionResult = runSubmissionChecks(projectPath);
+
+    if (submissionResult.passed) {
+      message += `✓ PASSED\n\n`;
+    } else {
+      totalErrors += submissionResult.summary.errors;
+      totalWarnings += submissionResult.summary.warnings;
+      message += `✗ ${submissionResult.summary.errors} error(s), ${submissionResult.summary.warnings} warning(s)\n`;
+      message += `  Categories: ${Object.entries(submissionResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
+    }
+
     // Summary
     message += `${'='.repeat(50)}\n`;
     message += `SUMMARY: ${totalErrors} error(s), ${totalWarnings} warning(s)\n`;
@@ -905,9 +986,172 @@ export class WpcsMcpServer {
     };
   }
 
+  private submissionCheck(projectPath: string): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const result = runSubmissionChecks(projectPath);
+
+    let message = `WORDPRESS.ORG SUBMISSION CHECK\n${'='.repeat(50)}\n\n`;
+    message += `Path: ${projectPath}\n\n`;
+
+    if (result.passed) {
+      message += `✓ All submission checks passed! Ready for WordPress.org.\n`;
+      return this.successResult(message);
+    }
+
+    const byCategory = new Map<string, typeof result.issues>();
+    for (const issue of result.issues) {
+      const existing = byCategory.get(issue.category) || [];
+      existing.push(issue);
+      byCategory.set(issue.category, existing);
+    }
+
+    for (const [category, issues] of byCategory) {
+      message += `${category.toUpperCase()}\n${'-'.repeat(40)}\n`;
+      for (const issue of issues) {
+        const prefix = issue.type === 'error' ? '[ERROR]' : issue.type === 'warning' ? '[WARN]' : '[INFO]';
+        message += `${prefix} ${issue.file}${issue.line > 0 ? `:${issue.line}` : ''}\n`;
+        message += `  ${issue.message}\n\n`;
+      }
+    }
+
+    message += `${'='.repeat(50)}\n`;
+    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s), ${result.summary.infos} info(s)\n`;
+    if (result.summary.errors > 0) {
+      message += `Fix errors before WordPress.org submission.`;
+    }
+
+    return {
+      content: [{ type: 'text', text: message } as TextContent],
+      isError: result.summary.errors > 0,
+    };
+  }
+
+  private reportGenerate(
+    projectPath: string,
+    format: ReportFormat,
+    outputFile?: string
+  ): CallToolResult {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    const projectType = detectProjectType(projectPath);
+
+    const qualityResult = runQualityChecks(projectPath);
+    const frontendResult = runFrontendChecks(projectPath);
+    const codeResult = runCodeAnalysis(projectPath);
+    const submissionResult = runSubmissionChecks(projectPath);
+
+    const sections = [
+      buildSection('Quality', qualityResult.issues),
+      buildSection('Frontend', frontendResult.issues),
+      buildSection('Code Analysis', codeResult.issues),
+      buildSection('Submission Readiness', submissionResult.issues),
+    ];
+
+    const { content } = generateReport(projectPath, projectType, sections, format, outputFile);
+
+    let message = content;
+    if (outputFile) {
+      message += `\n\nReport written to: ${outputFile}`;
+    }
+
+    return this.successResult(message);
+  }
+
+  private async phpstanCheck(projectPath: string, level: number): Promise<CallToolResult> {
+    if (!projectPath) {
+      return this.errorResult('path is required');
+    }
+
+    // Detect PHPStan binary
+    let phpstanPath: string | null = null;
+    const candidates = [
+      `${projectPath}/vendor/bin/phpstan`,
+      `${process.env.HOME}/.composer/vendor/bin/phpstan`,
+    ];
+
+    for (const p of candidates) {
+      try {
+        execSync(`test -f "${p}"`, { stdio: 'pipe' });
+        phpstanPath = p;
+        break;
+      } catch { /* not found */ }
+    }
+
+    if (!phpstanPath) {
+      try {
+        execSync('which phpstan', { stdio: 'pipe' });
+        phpstanPath = 'phpstan';
+      } catch { /* not found */ }
+    }
+
+    if (!phpstanPath) {
+      return this.successResult(
+        'PHPStan is not installed. To enable static analysis:\n' +
+        '  composer require --dev phpstan/phpstan\n' +
+        '  composer require --dev szepeviktor/phpstan-wordpress\n\n' +
+        'Skipping static analysis.'
+      );
+    }
+
+    const safeLevel = Math.max(0, Math.min(9, level));
+    let command = `"${phpstanPath}" analyse "${projectPath}" --level=${safeLevel} --error-format=json --no-progress`;
+
+    try {
+      execSync(`test -f "${projectPath}/phpstan.neon"`, { stdio: 'pipe' });
+    } catch {
+      command += ` --memory-limit=512M`;
+    }
+
+    try {
+      execSync(command, { encoding: 'utf-8', stdio: 'pipe', timeout: 120000 });
+      return this.successResult(
+        `PHPSTAN: PASSED\n\nAll files pass PHPStan level ${safeLevel} analysis.\nNo type errors found.`
+      );
+    } catch (error: unknown) {
+      const execError = error as { stdout?: string; message?: string };
+      const output = execError.stdout || '';
+
+      if (!output) {
+        return this.errorResult(`PHPStan failed: ${execError.message || 'Unknown error'}`);
+      }
+
+      try {
+        const result = JSON.parse(output);
+        const totalErrors = result.totals?.file_errors || 0;
+
+        let message = `PHPSTAN: ISSUES FOUND (Level ${safeLevel})\n${'='.repeat(50)}\n\n`;
+
+        if (result.files) {
+          for (const [filePath, data] of Object.entries(result.files) as [string, { errors: number; messages: Array<{ line: number; message: string }> }][]) {
+            const rel = filePath.replace(projectPath + '/', '');
+            message += `${rel} (${data.errors} error(s)):\n`;
+            for (const msg of data.messages) {
+              message += `  Line ${msg.line}: ${msg.message}\n`;
+            }
+            message += '\n';
+          }
+        }
+
+        message += `${'='.repeat(50)}\nTotal: ${totalErrors} error(s)\n`;
+
+        return {
+          content: [{ type: 'text', text: message } as TextContent],
+          isError: totalErrors > 0,
+        };
+      } catch {
+        return this.errorResult(`PHPStan output could not be parsed: ${output.substring(0, 200)}`);
+      }
+    }
+  }
+
   async run() {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
-    console.error('WPCS MCP Server running on stdio');
+    console.error('WPCS MCP Server v2.0.0 running on stdio');
   }
 }

@@ -83,9 +83,18 @@ async function main() {
     }
   }
 
-  console.error('Starting WPCS MCP Server...');
+  // Check for optional PHPStan (v2.0)
+  let phpstanAvailable = false;
+  try {
+    const { execSync: execSyncCheck } = await import('child_process');
+    execSyncCheck('which phpstan 2>/dev/null || test -f vendor/bin/phpstan', { stdio: 'pipe' });
+    phpstanAvailable = true;
+  } catch { /* PHPStan not available, optional */ }
+
+  console.error('Starting WPCS MCP Server v2.0.0...');
   console.error('phpcs path:', phpcsCheck.path);
   console.error('Available standards:', wpcsCheck.standards?.join(', '));
+  console.error('PHPStan:', phpstanAvailable ? 'available' : 'not installed (optional)');
 
   const server = new WpcsMcpServer();
   await server.run();

@@ -122,7 +122,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_quality_check',
     description:
-      'Advanced quality checks: hook usage, enqueue timing, blocking calls, accessibility (alt, labels, ARIA), security patterns, large files. Catches issues WPCS misses.',
+      'Advanced quality checks: hook usage, enqueue timing, security (SQL injection, XSS, SSRF, nonce mismatch, shell exec), performance (N+1 queries, unbounded queries, missing timeouts), accessibility, deprecated WP functions. Catches issues WPCS misses.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -137,7 +137,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_validate_project',
     description:
-      'Validate WordPress plugin or theme project. Checks headers, readme.txt, text domain, and required files. Auto-detects project type.',
+      'Validate WordPress plugin or theme project. Checks headers, readme.txt, text domain, .pot file, stable tag match, GPL license, and uninstall cleanup. Auto-detects project type.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -156,7 +156,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_full_check',
     description:
-      'Run comprehensive WordPress code check: WPCS + PHP Compatibility + Project Validation (headers, readme, i18n). Use before release or WordPress.org submission.',
+      'Run comprehensive WordPress code check: WPCS + PHP Compatibility + Quality (security, performance, deprecated) + Frontend (accessibility, responsive) + Code Analysis (dead code, hooks) + Submission readiness. Use before release or WordPress.org submission.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -180,7 +180,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_frontend_check',
     description:
-      'Check HTML/CSS/JS consistency: file naming (kebab-case, snake_case), class naming (BEM), vendor prefixes, color formats, responsive design (media queries, touch targets), !important overuse.',
+      'Check HTML/CSS/JS consistency and accessibility: file naming, class naming (BEM), vendor prefixes, responsive design, ARIA role validation, heading hierarchy, skip links, form label association, button types, tabindex.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -195,13 +195,73 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_code_analysis',
     description:
-      'Detect dead code: unused functions, undefined functions, orphan hook callbacks, unused classes, duplicate definitions. Finds disconnected code.',
+      'Detect dead code and hook issues: unused/undefined functions, orphan callbacks, duplicate definitions, hook priority conflicts, accepted_args mismatch, wrong-context hooks.',
     inputSchema: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
           description: 'Path to the plugin or theme directory',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_submission_check',
+    description:
+      'WordPress.org pre-submission audit: GPL license, stable tag match, changelog version, no tracking without consent, dismissible notices, uninstall cleanup, ABSPATH guards, prefix checking, no CDN deps, trademark check, required files, SVN readiness.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_generate_report',
+    description:
+      'Generate a comprehensive report in JSON, Markdown, or summary format. Runs all enabled checks and outputs a graded report (A-F). Optionally writes to a file for CI/CD integration.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+        format: {
+          type: 'string',
+          enum: ['json', 'markdown', 'summary'],
+          description: 'Report format (default: summary)',
+          default: 'summary',
+        },
+        output_file: {
+          type: 'string',
+          description: 'Optional file path to write the report to',
+        },
+      },
+      required: ['path'],
+    },
+  },
+  {
+    name: 'wpcs_phpstan_check',
+    description:
+      'Run PHPStan static analysis (if installed). Uses WordPress stubs for better type checking. Falls back gracefully if PHPStan is not installed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to the plugin or theme directory',
+        },
+        level: {
+          type: 'number',
+          description: 'PHPStan analysis level (0-9, default: 5)',
+          default: 5,
         },
       },
       required: ['path'],

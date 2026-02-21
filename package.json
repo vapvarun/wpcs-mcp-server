@@ -1,7 +1,7 @@
 {
   "name": "wpcs-mcp-server",
-  "version": "1.0.0",
-  "description": "MCP server for WordPress Coding Standards - phpcs/phpcbf integration for Claude AI",
+  "version": "2.0.0",
+  "description": "MCP server for WordPress Coding Standards - comprehensive code quality, security, performance, accessibility, and submission readiness checks for Claude AI",
   "type": "module",
   "main": "build/index.js",
   "bin": {

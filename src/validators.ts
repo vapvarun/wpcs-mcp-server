@@ -1,20 +1,13 @@
 /**
  * WPCS MCP Server - Validators
- * Lightweight checks for plugin/theme headers, readme, i18n
+ * Lightweight checks for plugin/theme headers, readme, i18n, and new v2.0 validations
  * No external dependencies - pure file analysis
  */
 
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
-
-export interface ValidationResult {
-  valid: boolean;
-  errors: string[];
-  warnings: string[];
-  info: Record<string, string>;
-}
-
-export type ProjectType = 'plugin' | 'theme' | 'unknown';
+import type { ValidationResult, ProjectType } from './types.js';
+import { findPhpFiles } from './shared-utils.js';
 
 /**
  * Detect project type
@@ -383,29 +376,145 @@ function parseHeaders(content: string): Record<string, string> {
   return headers;
 }
 
+// ─── v2.0 Additional Validators ─────────────────────────────────
+
 /**
- * Find all PHP files in directory (excluding vendor, node_modules, etc.)
+ * Validate .pot file exists and is valid
  */
-function findPhpFiles(dir: string, files: string[] = []): string[] {
-  const excludeDirs = ['vendor', 'node_modules', 'build', 'dist', '.git'];
+export function validatePotFile(projectPath: string, textDomain?: string): ValidationResult {
+  const result: ValidationResult = { valid: true, errors: [], warnings: [], info: {} };
+  const domain = textDomain || basename(projectPath);
 
-  try {
-    const items = readdirSync(dir, { withFileTypes: true });
-
-    for (const item of items) {
-      const fullPath = join(dir, item.name);
-
-      if (item.isDirectory()) {
-        if (!excludeDirs.includes(item.name)) {
-          findPhpFiles(fullPath, files);
-        }
-      } else if (item.name.endsWith('.php')) {
-        files.push(fullPath);
-      }
-    }
-  } catch {
-    // Ignore errors
+  const langDir = join(projectPath, 'languages');
+  if (!existsSync(langDir)) {
+    result.warnings.push('No languages/ directory found. Create one for i18n support.');
+    return result;
   }
 
-  return files;
+  const potFile = join(langDir, `${domain}.pot`);
+  if (!existsSync(potFile)) {
+    result.warnings.push(`Missing ${domain}.pot file in languages/. Generate with wp i18n make-pot.`);
+    return result;
+  }
+
+  try {
+    const content = readFileSync(potFile, 'utf-8');
+    result.info['POT File'] = `languages/${domain}.pot`;
+
+    if (!content.includes('msgid')) {
+      result.errors.push('POT file appears invalid (no msgid entries).');
+      result.valid = false;
+    }
+
+    if (!content.includes('Project-Id-Version')) {
+      result.warnings.push('POT file missing Project-Id-Version header.');
+    }
+
+    const msgidCount = (content.match(/^msgid /gm) || []).length;
+    result.info['Translatable strings'] = msgidCount.toString();
+  } catch (error) {
+    result.errors.push(`Error reading POT file: ${(error as Error).message}`);
+    result.valid = false;
+  }
+
+  return result;
+}
+
+/**
+ * Validate stable tag matches plugin version
+ */
+export function validateStableTagMatch(projectPath: string): ValidationResult {
+  const result: ValidationResult = { valid: true, errors: [], warnings: [], info: {} };
+
+  const readmePath = join(projectPath, 'readme.txt');
+  if (!existsSync(readmePath)) return result;
+
+  const readmeContent = readFileSync(readmePath, 'utf-8');
+  const stableMatch = readmeContent.match(/Stable tag:\s*(.+)/i);
+  if (!stableMatch) return result;
+
+  const stableTag = stableMatch[1].trim();
+  result.info['Stable tag'] = stableTag;
+
+  if (stableTag === 'trunk') {
+    result.warnings.push('Stable tag is "trunk". Use a specific version number for production.');
+    return result;
+  }
+
+  const phpFiles = readdirSync(projectPath).filter(f => f.endsWith('.php'));
+  for (const file of phpFiles) {
+    const content = readFileSync(join(projectPath, file), 'utf-8');
+    if (/Plugin Name:/i.test(content)) {
+      const versionMatch = content.match(/\*\s*Version:\s*(.+)/i);
+      if (versionMatch) {
+        const pluginVersion = versionMatch[1].trim();
+        result.info['Plugin version'] = pluginVersion;
+
+        if (stableTag !== pluginVersion) {
+          result.errors.push(`Stable tag "${stableTag}" does not match plugin version "${pluginVersion}".`);
+          result.valid = false;
+        }
+      }
+      break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Validate GPL license presence
+ */
+export function validateGplLicense(projectPath: string): ValidationResult {
+  const result: ValidationResult = { valid: true, errors: [], warnings: [], info: {} };
+
+  const licenseFiles = ['LICENSE', 'LICENSE.txt', 'LICENSE.md', 'license.txt'];
+  const foundFile = licenseFiles.find(f => existsSync(join(projectPath, f)));
+
+  if (foundFile) {
+    result.info['License file'] = foundFile;
+  } else {
+    result.warnings.push('No LICENSE file found. WordPress.org requires GPL-2.0-or-later.');
+  }
+
+  const phpFiles = readdirSync(projectPath).filter(f => f.endsWith('.php'));
+  for (const file of phpFiles) {
+    const content = readFileSync(join(projectPath, file), 'utf-8');
+    if (/Plugin Name:/i.test(content)) {
+      if (/License:\s*GPL|License:\s*GNU General Public/i.test(content)) {
+        result.info['License header'] = 'GPL found in plugin header';
+      } else {
+        result.errors.push('Main plugin file missing GPL license in header.');
+        result.valid = false;
+      }
+      break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Validate uninstall cleanup mechanism exists
+ */
+export function validateUninstallCleanup(projectPath: string): ValidationResult {
+  const result: ValidationResult = { valid: true, errors: [], warnings: [], info: {} };
+
+  const hasUninstallFile = existsSync(join(projectPath, 'uninstall.php'));
+  if (hasUninstallFile) {
+    result.info['Uninstall'] = 'uninstall.php found';
+    return result;
+  }
+
+  const phpFiles = findPhpFiles(projectPath);
+  for (const file of phpFiles) {
+    const content = readFileSync(file, 'utf-8');
+    if (/register_uninstall_hook\s*\(/i.test(content)) {
+      result.info['Uninstall'] = 'register_uninstall_hook() found';
+      return result;
+    }
+  }
+
+  result.warnings.push('No uninstall.php or register_uninstall_hook() found. Plugin should clean up on uninstall.');
+  return result;
 }

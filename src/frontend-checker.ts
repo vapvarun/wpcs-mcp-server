@@ -1,34 +1,12 @@
 /**
  * WPCS MCP Server - Frontend Consistency Checker
- * HTML, CSS, file naming, responsive design checks
+ * HTML, CSS, file naming, responsive design, accessibility checks
  */
 
 import { readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
-
-export interface FrontendIssue {
-  file: string;
-  line: number;
-  type: 'error' | 'warning';
-  category: 'html' | 'css' | 'consistency' | 'responsive' | 'naming';
-  message: string;
-  code: string;
-}
-
-export interface FrontendResult {
-  issues: FrontendIssue[];
-  summary: {
-    errors: number;
-    warnings: number;
-    byCategory: Record<string, number>;
-  };
-  patterns: {
-    classNaming: string[];
-    colorFormats: string[];
-    units: string[];
-    fileNaming: string[];
-  };
-}
+import type { FrontendIssue, FrontendResult, FrontendCategory, IssueSeverity } from './types.js';
+import { findFilesByExt, findAllCodeFiles, getLineNumber as sharedGetLineNumber, findPatternLine as sharedFindPatternLine } from './shared-utils.js';
 
 /**
  * Run frontend consistency checks
@@ -83,6 +61,13 @@ export function runFrontendChecks(projectPath: string): FrontendResult {
 
   // Analyze consistency across files
   issues.push(...analyzeConsistency(patterns, projectPath));
+
+  // Accessibility checks (new v2.0)
+  for (const file of phpFiles) {
+    const relativePath = file.replace(projectPath + '/', '');
+    const content = readFileSync(file, 'utf-8');
+    issues.push(...checkAccessibilityPatterns(relativePath, content));
+  }
 
   // Calculate summary
   const summary = {
@@ -811,6 +796,122 @@ function analyzeConsistency(patterns: FrontendResult['patterns'], projectPath: s
       message: `Mixed file naming: ${nonClassStyles.map(([s, c]) => `${s}(${c})`).join(', ')}`,
       code: 'project-file-naming',
     });
+  }
+
+  return issues;
+}
+
+// ─── Accessibility Pattern Checks (v2.0) ────────────────────────
+
+const VALID_ARIA_ROLES = new Set([
+  'alert', 'alertdialog', 'application', 'article', 'banner', 'button', 'cell',
+  'checkbox', 'columnheader', 'combobox', 'complementary', 'contentinfo',
+  'definition', 'dialog', 'directory', 'document', 'feed', 'figure', 'form',
+  'grid', 'gridcell', 'group', 'heading', 'img', 'link', 'list', 'listbox',
+  'listitem', 'log', 'main', 'marquee', 'math', 'menu', 'menubar', 'menuitem',
+  'menuitemcheckbox', 'menuitemradio', 'navigation', 'none', 'note', 'option',
+  'presentation', 'progressbar', 'radio', 'radiogroup', 'region', 'row',
+  'rowgroup', 'rowheader', 'scrollbar', 'search', 'searchbox', 'separator',
+  'slider', 'spinbutton', 'status', 'switch', 'tab', 'table', 'tablist',
+  'tabpanel', 'term', 'textbox', 'timer', 'toolbar', 'tooltip', 'tree',
+  'treegrid', 'treeitem',
+]);
+
+function checkAccessibilityPatterns(file: string, content: string): FrontendIssue[] {
+  const issues: FrontendIssue[] = [];
+  let match;
+
+  // 1. ARIA role validation
+  const rolePattern = /role\s*=\s*["']([^"']+)["']/gi;
+  while ((match = rolePattern.exec(content)) !== null) {
+    const role = match[1].trim().toLowerCase();
+    if (!VALID_ARIA_ROLES.has(role)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        category: 'accessibility',
+        message: `Invalid ARIA role "${role}". Check WAI-ARIA specification.`,
+        code: 'invalid-aria-role',
+      });
+    }
+  }
+
+  // 2. Heading hierarchy - detect skipped levels
+  const headingPattern = /<h([1-6])\b/gi;
+  const headingLevels: { level: number; index: number }[] = [];
+  while ((match = headingPattern.exec(content)) !== null) {
+    headingLevels.push({ level: parseInt(match[1], 10), index: match.index });
+  }
+  for (let i = 1; i < headingLevels.length; i++) {
+    const prev = headingLevels[i - 1].level;
+    const curr = headingLevels[i].level;
+    if (curr > prev + 1) {
+      issues.push({
+        file, line: getLineNumber(content, headingLevels[i].index), type: 'warning',
+        category: 'accessibility',
+        message: `Skipped heading level: <h${prev}> to <h${curr}>. Use sequential headings.`,
+        code: 'heading-hierarchy-skip',
+      });
+    }
+  }
+
+  // 3. Skip link check (template files)
+  const isTemplate = /get_header|get_footer|wp_head|<!DOCTYPE/i.test(content);
+  if (isTemplate && /<body/i.test(content)) {
+    if (!/skip.*content|skip.*nav|skip.*main/i.test(content)) {
+      issues.push({
+        file, line: 1, type: 'warning',
+        category: 'accessibility',
+        message: 'Template missing skip-to-content link for keyboard navigation.',
+        code: 'missing-skip-link',
+      });
+    }
+  }
+
+  // 4. Form label association
+  const inputPattern = /<input\s+[^>]*id\s*=\s*["']([^"']+)["'][^>]*>/gi;
+  while ((match = inputPattern.exec(content)) !== null) {
+    const inputId = match[1];
+    const inputTag = match[0];
+    // Skip hidden inputs and submit/button types
+    if (/type\s*=\s*["'](?:hidden|submit|button|reset|image)["']/i.test(inputTag)) continue;
+    // Check for matching label or aria-label/aria-labelledby
+    if (/aria-label\s*=|aria-labelledby\s*=/i.test(inputTag)) continue;
+    const labelPattern = new RegExp(`<label[^>]*for\\s*=\\s*["']${inputId}["']`, 'i');
+    if (!labelPattern.test(content)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'error',
+        category: 'accessibility',
+        message: `Input #${inputId} has no associated <label for="${inputId}"> or aria-label.`,
+        code: 'input-missing-label',
+      });
+    }
+  }
+
+  // 5. Button type
+  const buttonPattern = /<button(?:\s[^>]*)?>|<button>/gi;
+  while ((match = buttonPattern.exec(content)) !== null) {
+    if (!/type\s*=\s*["'](?:button|submit|reset)["']/i.test(match[0])) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        category: 'accessibility',
+        message: '<button> without explicit type. Add type="button" or type="submit".',
+        code: 'button-missing-type',
+      });
+    }
+  }
+
+  // 6. Tabindex misuse
+  const tabindexPattern = /tabindex\s*=\s*["'](\d+)["']/gi;
+  while ((match = tabindexPattern.exec(content)) !== null) {
+    const value = parseInt(match[1], 10);
+    if (value > 0) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        category: 'accessibility',
+        message: `tabindex="${value}" disrupts natural tab order. Use 0 or -1 only.`,
+        code: 'positive-tabindex',
+      });
+    }
   }
 
   return issues;
