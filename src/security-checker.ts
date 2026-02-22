@@ -44,6 +44,19 @@ export function runSecurityChecks(projectPath: string): SecurityResult {
     issues.push(...checkDirectSuperglobal(rel, content, lines));
     issues.push(...checkOutputWithoutEscaping(rel, content));
     issues.push(...checkDeserializationRisk(rel, content));
+    // v3.0 checks
+    issues.push(...checkTimingAttack(rel, content));
+    issues.push(...checkInsecureCookies(rel, content));
+    issues.push(...checkPlaintextPasswords(rel, content));
+    issues.push(...checkCronInfiniteRecursion(rel, content));
+    issues.push(...checkOrphanedCronEvents(rel, content));
+    issues.push(...checkMissingCronCleanup(rel, content));
+    issues.push(...checkSessionOutsideWP(rel, content));
+    issues.push(...checkVersionExposure(rel, content));
+    issues.push(...checkUserEnumeration(rel, content));
+    issues.push(...checkInfoDisclosure(rel, content));
+    issues.push(...checkWeakTokenGeneration(rel, content));
+    issues.push(...checkMissingWpUnslash(rel, content));
   }
 
   const errors = issues.filter(i => i.type === 'error').length;
@@ -413,6 +426,228 @@ function checkDeserializationRisk(file: string, content: string): SecurityIssue[
       message: 'maybe_unserialize() on potentially user-controlled data. Validate input source first.',
       code: 'deserialization-risk',
     });
+  }
+  return issues;
+}
+
+// ─── v3.0 checks ────────────────────────────────────────────────
+
+function checkTimingAttack(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\$(?:token|nonce|hash|secret|api_key|signature|hmac|digest)\s*===\s*|===\s*\$(?:token|nonce|hash|secret|api_key|signature|hmac|digest)/gi;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 200), match.index + match[0].length + 200);
+    if (!/hash_equals/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: 'Timing attack risk: use hash_equals() instead of === for token/hash comparison.',
+        code: 'timing-attack',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkInsecureCookies(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\bsetcookie\s*\(/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const callContext = content.substring(match.index, match.index + 500);
+    const hasSecureFlags = /secure\s*['"=]|httponly\s*['"=]|samesite\s*['"=]/i.test(callContext);
+    const hasBooleanFlags = /,\s*(true|false)\s*,\s*(true|false)\s*,\s*true/i.test(callContext);
+    if (!hasSecureFlags && !hasBooleanFlags) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: 'setcookie() without secure/httponly/samesite flags. Use array syntax with secure, httponly, and samesite options.',
+        code: 'insecure-cookie',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkPlaintextPasswords(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /update_(?:user_meta|option|post_meta)\s*\([^)]*(?:password|passwd|pass)\b/gi;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 300), match.index + match[0].length + 300);
+    if (!/wp_hash_password|password_hash|wp_set_password/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'error',
+        message: 'Possible plaintext password storage. Use wp_hash_password() before storing passwords.',
+        code: 'plaintext-password',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkCronInfiniteRecursion(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const schedulePattern = /wp_schedule_(?:event|single_event)\s*\([^)]*['"]([^'"]+)['"]\s*\)/g;
+  let match;
+  while ((match = schedulePattern.exec(content)) !== null) {
+    const hookName = match[1];
+    const escapedHook = hookName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const doActionPattern = new RegExp(`do_action\\s*\\(\\s*['"]${escapedHook}['"]`, 'g');
+    if (doActionPattern.test(content)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'error',
+        message: `Cron hook "${hookName}" has do_action() call that may cause infinite recursion. Use a different name for the cron event vs the action.`,
+        code: 'cron-infinite-recursion',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkOrphanedCronEvents(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /wp_schedule_(?:event|single_event)\s*\(/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 300), match.index + match[0].length + 300);
+    if (!/wp_next_scheduled/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: 'wp_schedule_event() without wp_next_scheduled() check. This can create duplicate cron events.',
+        code: 'orphaned-cron-event',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkMissingCronCleanup(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  if (!/wp_schedule_(?:event|single_event)/i.test(content)) return [];
+  if (/wp_clear_scheduled_hook|wp_unschedule_event/i.test(content)) return [];
+  if (/register_deactivation_hook|deactivate_/i.test(content)) {
+    const lines = content.split('\n');
+    issues.push({
+      file, line: findPatternLine(lines, /wp_schedule_(?:event|single_event)/), type: 'warning',
+      message: 'Cron events scheduled but no wp_clear_scheduled_hook() in deactivation. Cron events will persist after plugin deactivation.',
+      code: 'missing-cron-cleanup',
+    });
+  }
+  return issues;
+}
+
+function checkSessionOutsideWP(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\b(session_start|session_regenerate_id)\s*\(|\$_SESSION\s*\[/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    issues.push({
+      file, line: getLineNumber(content, match.index), type: 'warning',
+      message: 'PHP session usage detected. WordPress plugins should use transients or custom DB tables instead of $_SESSION.',
+      code: 'session-outside-wp',
+    });
+  }
+  return issues;
+}
+
+function checkVersionExposure(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const versionPattern = /bloginfo\s*\(\s*['"]version['"]\s*\)/g;
+  let match;
+  while ((match = versionPattern.exec(content)) !== null) {
+    issues.push({
+      file, line: getLineNumber(content, match.index), type: 'warning',
+      message: "bloginfo('version') exposes WordPress version. Remove or restrict to admin context.",
+      code: 'version-exposure',
+    });
+  }
+  const generatorPattern = /add_action\s*\(\s*['"]wp_head['"]\s*,\s*['"]wp_generator['"]/g;
+  while ((match = generatorPattern.exec(content)) !== null) {
+    issues.push({
+      file, line: getLineNumber(content, match.index), type: 'warning',
+      message: 'wp_generator outputs WordPress version in HTML. Use remove_action() to hide it.',
+      code: 'version-exposure',
+    });
+  }
+  return issues;
+}
+
+function checkUserEnumeration(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\$_GET\s*\[\s*['"]author['"]\s*\]/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 300), match.index + match[0].length + 300);
+    if (!/wp_redirect|wp_safe_redirect|wp_die|exit|is_admin/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: '$_GET[\'author\'] usage without redirect/block. Consider protecting against user enumeration.',
+        code: 'user-enumeration',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkInfoDisclosure(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const dbInfoPattern = /(?:echo|print)\s+.*\$wpdb\s*->\s*(?:last_query|last_error)/g;
+  let match;
+  while ((match = dbInfoPattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 200), match.index + match[0].length + 200);
+    if (!/WP_DEBUG|is_admin\s*\(\)/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'error',
+        message: 'Database debug info ($wpdb->last_query/last_error) in output. Use error_log() instead.',
+        code: 'info-disclosure',
+      });
+    }
+  }
+  const filePattern = /(?:echo|print|wp_die)\s*\(?\s*.*__FILE__/g;
+  while ((match = filePattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 200), match.index + match[0].length + 200);
+    if (!/error_log|WP_DEBUG/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: '__FILE__ in user-facing output exposes server path. Use generic error messages.',
+        code: 'info-disclosure',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkWeakTokenGeneration(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\b(md5|sha1)\s*\(\s*(?:time|rand|mt_rand|microtime|uniqid)\s*\(/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 200), match.index + match[0].length + 200);
+    const isTokenContext = /token|key|secret|nonce|salt|hash|random|session|csrf|auth/i.test(surroundingCode);
+    if (isTokenContext) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'error',
+        message: `Weak token: ${match[1]}() with predictable input. Use wp_generate_password() or random_bytes().`,
+        code: 'weak-token-generation',
+      });
+    }
+  }
+  return issues;
+}
+
+function checkMissingWpUnslash(file: string, content: string): SecurityIssue[] {
+  const issues: SecurityIssue[] = [];
+  const pattern = /\bsanitize_\w+\s*\(\s*\$_(GET|POST|REQUEST)\s*\[/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const surroundingCode = content.substring(Math.max(0, match.index - 100), match.index + match[0].length + 100);
+    if (!/wp_unslash/i.test(surroundingCode)) {
+      issues.push({
+        file, line: getLineNumber(content, match.index), type: 'warning',
+        message: `sanitize_*() on $_${match[1]} without wp_unslash(). WordPress adds slashes to superglobals — unslash before sanitizing.`,
+        code: 'missing-wp-unslash',
+      });
+    }
   }
   return issues;
 }
