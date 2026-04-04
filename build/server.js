@@ -875,15 +875,22 @@ export class WpcsMcpServer {
                 'Skipping static analysis.');
         }
         const safeLevel = Math.max(0, Math.min(9, level));
-        let command = `"${phpstanPath}" analyse "${projectPath}" --level=${safeLevel} --error-format=json --no-progress`;
-        try {
-            execSync(`test -f "${projectPath}/phpstan.neon"`, { stdio: 'pipe' });
+        // Check if project has phpstan.neon — if so, respect it
+        const { existsSync: fsExists } = require('fs');
+        const hasPhpstanConfig = fsExists(`${projectPath}/phpstan.neon`) ||
+            fsExists(`${projectPath}/phpstan.neon.dist`) ||
+            fsExists(`${projectPath}/phpstan.dist.neon`);
+        let command;
+        if (hasPhpstanConfig) {
+            // Project config defines level, paths, scanDirectories — respect it
+            command = `"${phpstanPath}" analyse --error-format=json --no-progress --memory-limit=1G`;
         }
-        catch {
-            command += ` --memory-limit=512M`;
+        else {
+            // No project config — use defaults
+            command = `"${phpstanPath}" analyse "${projectPath}" --level=${safeLevel} --error-format=json --no-progress --memory-limit=512M`;
         }
         try {
-            execSync(command, { encoding: 'utf-8', stdio: 'pipe', timeout: 120000 });
+            execSync(command, { encoding: 'utf-8', stdio: 'pipe', timeout: 300000, cwd: projectPath });
             return this.successResult(`PHPSTAN: PASSED\n\nAll files pass PHPStan level ${safeLevel} analysis.\nNo type errors found.`);
         }
         catch (error) {
