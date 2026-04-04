@@ -13,11 +13,19 @@ export declare class PhpcsRunner {
         minPhpVersion?: string;
     });
     /**
-     * Build phpcs command with all options
+     * Check if target path (or its parent directories) has a phpcs config file.
+     * PHPCS auto-detects: .phpcs.xml, phpcs.xml, .phpcs.xml.dist, phpcs.xml.dist
+     */
+    private findPhpcsConfig;
+    /**
+     * Build phpcs command with all options.
+     * If the target has a plugin-level phpcs config (.phpcs.xml.dist etc.),
+     * skip --standard so PHPCS uses the project config instead.
      */
     private buildCommand;
     /**
-     * Build phpcbf command with all options
+     * Build phpcbf command with all options.
+     * Same logic: respects project-level config if present.
      */
     private buildFixCommand;
     /**

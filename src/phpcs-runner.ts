@@ -3,6 +3,8 @@
  */
 
 import { execSync } from 'child_process';
+import { existsSync } from 'fs';
+import { join, dirname } from 'path';
 import { PhpcsResult, WpcsCheckResult, WpcsFixResult } from './types.js';
 
 export class PhpcsRunner {
@@ -34,24 +36,62 @@ export class PhpcsRunner {
   }
 
   /**
-   * Build phpcs command with all options
+   * Check if target path (or its parent directories) has a phpcs config file.
+   * PHPCS auto-detects: .phpcs.xml, phpcs.xml, .phpcs.xml.dist, phpcs.xml.dist
+   */
+  private findPhpcsConfig(target: string): boolean {
+    const configNames = ['.phpcs.xml', 'phpcs.xml', '.phpcs.xml.dist', 'phpcs.xml.dist'];
+    let dir = target;
+
+    // If target is a file, start from its directory
+    try {
+      const { statSync } = require('fs');
+      if (statSync(target).isFile()) {
+        dir = dirname(target);
+      }
+    } catch { /* use target as-is */ }
+
+    // Walk up to find config (max 10 levels)
+    for (let i = 0; i < 10; i++) {
+      for (const name of configNames) {
+        if (existsSync(join(dir, name))) return true;
+      }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+
+    return false;
+  }
+
+  /**
+   * Build phpcs command with all options.
+   * If the target has a plugin-level phpcs config (.phpcs.xml.dist etc.),
+   * skip --standard so PHPCS uses the project config instead.
    */
   private buildCommand(target: string, reportFormat: string = 'json'): string {
-    let command = `phpcs --standard=${this.standard} --report=${reportFormat}`;
+    const hasProjectConfig = this.findPhpcsConfig(target);
 
-    // Add exclude patterns
-    if (this.excludePatterns.length > 0) {
-      command += ` --ignore=${this.excludePatterns.join(',')}`;
-    }
+    let command = `phpcs --report=${reportFormat} -q`;
 
-    // Add text domain check
-    if (this.textDomain) {
-      command += ` --runtime-set text_domain ${this.textDomain}`;
-    }
+    // Only add --standard if no project-level config exists
+    if (!hasProjectConfig) {
+      command += ` --standard=${this.standard}`;
 
-    // Add minimum PHP version
-    if (this.minPhpVersion) {
-      command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+      // Add exclude patterns (project config handles its own excludes)
+      if (this.excludePatterns.length > 0) {
+        command += ` --ignore=${this.excludePatterns.join(',')}`;
+      }
+
+      // Add text domain check
+      if (this.textDomain) {
+        command += ` --runtime-set text_domain ${this.textDomain}`;
+      }
+
+      // Add minimum PHP version
+      if (this.minPhpVersion) {
+        command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+      }
     }
 
     command += ` "${target}"`;
@@ -59,14 +99,19 @@ export class PhpcsRunner {
   }
 
   /**
-   * Build phpcbf command with all options
+   * Build phpcbf command with all options.
+   * Same logic: respects project-level config if present.
    */
   private buildFixCommand(target: string): string {
-    let command = `phpcbf --standard=${this.standard}`;
+    const hasProjectConfig = this.findPhpcsConfig(target);
 
-    // Add exclude patterns
-    if (this.excludePatterns.length > 0) {
-      command += ` --ignore=${this.excludePatterns.join(',')}`;
+    let command = `phpcbf`;
+
+    if (!hasProjectConfig) {
+      command += ` --standard=${this.standard}`;
+      if (this.excludePatterns.length > 0) {
+        command += ` --ignore=${this.excludePatterns.join(',')}`;
+      }
     }
 
     command += ` "${target}"`;
@@ -209,21 +254,25 @@ export class PhpcsRunner {
 
     // Run phpcs on all files at once
     const fileList = files.map((f) => `"${f}"`).join(' ');
-    let command = `phpcs --standard=${this.standard} --report=json`;
+    // Check if first file's directory has project config
+    const hasProjectConfig = files.length > 0 && this.findPhpcsConfig(files[0]);
 
-    // Add exclude patterns
-    if (this.excludePatterns.length > 0) {
-      command += ` --ignore=${this.excludePatterns.join(',')}`;
-    }
+    let command = `phpcs --report=json -q`;
 
-    // Add text domain check
-    if (this.textDomain) {
-      command += ` --runtime-set text_domain ${this.textDomain}`;
-    }
+    if (!hasProjectConfig) {
+      command += ` --standard=${this.standard}`;
 
-    // Add minimum PHP version
-    if (this.minPhpVersion) {
-      command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+      if (this.excludePatterns.length > 0) {
+        command += ` --ignore=${this.excludePatterns.join(',')}`;
+      }
+
+      if (this.textDomain) {
+        command += ` --runtime-set text_domain ${this.textDomain}`;
+      }
+
+      if (this.minPhpVersion) {
+        command += ` --runtime-set testVersion ${this.minPhpVersion}-`;
+      }
     }
 
     command += ` ${fileList}`;
