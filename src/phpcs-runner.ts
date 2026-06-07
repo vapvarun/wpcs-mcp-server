@@ -3,7 +3,7 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { PhpcsResult, WpcsCheckResult, WpcsFixResult } from './types.js';
 
@@ -45,7 +45,6 @@ export class PhpcsRunner {
 
     // If target is a file, start from its directory
     try {
-      const { statSync } = require('fs');
       if (statSync(target).isFile()) {
         dir = dirname(target);
       }
@@ -128,7 +127,7 @@ export class PhpcsRunner {
       const command = this.buildCommand(target);
 
       try {
-        execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+        execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
 
         // If no errors, phpcs exits with 0
         return {
@@ -206,7 +205,7 @@ export class PhpcsRunner {
       const command = this.buildFixCommand(filePath);
 
       try {
-        execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+        execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
       } catch (error: unknown) {
         const execError = error as { status?: number; message?: string };
         // phpcbf exits with 1 when fixes are made, 2 when fixes failed
@@ -279,7 +278,7 @@ export class PhpcsRunner {
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
-      execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+      execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
 
       return {
         success: true,

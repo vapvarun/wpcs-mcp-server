@@ -11,6 +11,7 @@ import {
   TextContent,
 } from '@modelcontextprotocol/sdk/types.js';
 import { execSync } from 'child_process';
+import { existsSync } from 'fs';
 import { PhpcsRunner } from './phpcs-runner.js';
 import { tools } from './tools.js';
 import {
@@ -952,15 +953,34 @@ export class WpcsMcpServer {
 
     let message = `${result.summary}\n\n`;
 
+    // Cap individual issues so a large directory can't blow the response/token budget.
+    // The pass/fail (canCommit), summary, and fixable count are always preserved.
+    const MAX_ISSUES = 100;
+    let shown = 0;
+    const omittedBySource = new Map<string, number>();
+
     for (const file of result.files) {
+      if (shown >= MAX_ISSUES) {
+        for (const msg of file.messages) omittedBySource.set(msg.source, (omittedBySource.get(msg.source) ?? 0) + 1);
+        continue;
+      }
       message += `${formatPath(file.path, workingDir)} (${file.errors} errors, ${file.warnings} warnings):\n`;
       for (const msg of file.messages) {
+        if (shown >= MAX_ISSUES) { omittedBySource.set(msg.source, (omittedBySource.get(msg.source) ?? 0) + 1); continue; }
         const prefix = msg.type === 'ERROR' ? '[ERROR]' : '[WARNING]';
         const fixable = msg.fixable ? ' (fixable)' : '';
         message += `  Line ${msg.line}, Col ${msg.column}: ${prefix} ${msg.message}${fixable}\n`;
         message += `    Source: ${msg.source}\n`;
+        shown++;
       }
       message += '\n';
+    }
+
+    if (omittedBySource.size > 0) {
+      const total = [...omittedBySource.values()].reduce((a, b) => a + b, 0);
+      message += `\n... ${total} more issue(s) omitted (showing first ${MAX_ISSUES}). Top sources:\n`;
+      [...omittedBySource.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)
+        .forEach(([s, n]) => message += `  ${n}x ${s}\n`);
     }
 
     if (result.fixableCount > 0) {
@@ -1101,10 +1121,9 @@ export class WpcsMcpServer {
     const safeLevel = Math.max(0, Math.min(9, level));
 
     // Check if project has phpstan.neon — if so, respect it
-    const { existsSync: fsExists } = require('fs');
-    const hasPhpstanConfig = fsExists(`${projectPath}/phpstan.neon`) ||
-                              fsExists(`${projectPath}/phpstan.neon.dist`) ||
-                              fsExists(`${projectPath}/phpstan.dist.neon`);
+    const hasPhpstanConfig = existsSync(`${projectPath}/phpstan.neon`) ||
+                              existsSync(`${projectPath}/phpstan.neon.dist`) ||
+                              existsSync(`${projectPath}/phpstan.dist.neon`);
 
     let command: string;
     if (hasPhpstanConfig) {

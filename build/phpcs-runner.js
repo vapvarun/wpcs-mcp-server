@@ -2,7 +2,7 @@
  * WPCS MCP Server - PHPCS/PHPCBF Runner
  */
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 export class PhpcsRunner {
     standard;
@@ -32,7 +32,6 @@ export class PhpcsRunner {
         let dir = target;
         // If target is a file, start from its directory
         try {
-            const { statSync } = require('fs');
             if (statSync(target).isFile()) {
                 dir = dirname(target);
             }
@@ -102,7 +101,7 @@ export class PhpcsRunner {
         try {
             const command = this.buildCommand(target);
             try {
-                execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+                execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
                 // If no errors, phpcs exits with 0
                 return {
                     success: true,
@@ -171,7 +170,7 @@ export class PhpcsRunner {
             // Run phpcbf
             const command = this.buildFixCommand(filePath);
             try {
-                execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+                execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
             }
             catch (error) {
                 const execError = error;
@@ -235,7 +234,7 @@ export class PhpcsRunner {
         command += ` ${fileList}`;
         const options = workingDir ? { cwd: workingDir } : {};
         try {
-            execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
+            execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
             return {
                 success: true,
                 canCommit: true,
