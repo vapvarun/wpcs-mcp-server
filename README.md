@@ -1,6 +1,6 @@
 # WPCS MCP Server
 
-A Model Context Protocol (MCP) server that integrates WordPress Coding Standards (WPCS) with Claude AI. Automatically check and fix your WordPress plugin/theme code to meet WordPress.org standards.
+A Model Context Protocol (MCP) server that puts the WordPress **static-standards toolchain** behind an AI assistant: PHP lint, PHP compatibility, WordPress Coding Standards (phpcs/WPCS), PHPStan, and project/readme validation - run against any plugin or theme on demand. It is a thin, honest wrapper over the real tools (it drives `phpcs`/`phpcbf`/`PHPCompatibilityWP`/`phpstan` and respects a project's own `.phpcs.xml.dist` / `phpstan.neon`), not a regex re-implementation.
 
 > **Don't use Claude AI?** No problem! See [GIT-HOOKS-SETUP.md](GIT-HOOKS-SETUP.md) for standalone Git hooks, GitHub Actions, and CI/CD setup.
 
@@ -292,7 +292,9 @@ PATH="YOUR_PHP_PATH:$HOME/.composer/vendor/bin:$PATH" node build/index.js
 
 ---
 
-## Available Tools
+## Available Tools (12)
+
+**Check & fix**
 
 | Tool | What It Does |
 |------|--------------|
@@ -301,7 +303,30 @@ PATH="YOUR_PHP_PATH:$HOME/.composer/vendor/bin:$PATH" node build/index.js
 | `wpcs_check_file` | Check a single PHP file |
 | `wpcs_check_directory` | Check all PHP files in a directory |
 | `wpcs_fix_file` | Auto-fix WPCS violations in a file |
-| `wpcs_check_php_compatibility` | Check PHP 8.1/8.2/8.3/8.4 compatibility |
+
+**Static standards (the release gate, in order)**
+
+| Tool | What It Does |
+|------|--------------|
+| `wpcs_full_check` | The ordered gate: `php -l` (fail-fast) -> WPCS -> PHP compat -> project validation -> supplementary heuristics |
+| `wpcs_check_php_compatibility` | `php -l` + PHPCompatibilityWP across PHP 8.1-8.5 |
+| `wpcs_phpstan_check` | PHPStan at the plugin's own level (uses its vendor binary) |
+| `wpcs_validate_project` | Headers, readme.txt, text domain, `.pot`, stable-tag match, GPL, uninstall |
+
+**Supplementary heuristics** (things WPCS/PHPStan do not cover)
+
+| Tool | What It Does |
+|------|--------------|
+| `wpcs_quality_check` | Hook timing, enqueue placement, hardcoded paths, large files, basic a11y |
+| `wpcs_frontend_check` | HTML/CSS/JS consistency + accessibility heuristics |
+| `wpcs_generate_report` | Graded (A-F) report of the two heuristics above |
+
+### Where this fits
+
+This server owns **static standards**. Its sibling,
+[wp-plugin-qa-mcp-server](https://github.com/vapvarun/wp-plugin-qa-mcp-server),
+owns **runtime + cross-layer QA** (live REST/AJAX, role probing, wiring and
+contract drift, journeys). One check, one owner - run each once.
 
 ---
 
@@ -545,6 +570,19 @@ Use this checklist to ensure everything is configured correctly:
 - [ ] **Server shows Connected** (`claude mcp list`)
 
 ---
+
+## Built by Wbcom Designs
+
+This is one of the internal helper tools we use at
+**[Wbcom Designs](https://wbcomdesigns.com)** to keep 100+ WordPress plugins and
+themes clean across releases - the same static gate that runs on our own
+products before they ship.
+
+We build community and commerce for WordPress: **BuddyPress / BuddyBoss**
+community add-ons, **WooCommerce** extensions, and the **Reign** and **BuddyX**
+themes. If this tool helps you ship cleaner WordPress code, the products it keeps
+healthy might help you build your community or store - browse them at
+**[wbcomdesigns.com](https://wbcomdesigns.com)**.
 
 ## License
 
