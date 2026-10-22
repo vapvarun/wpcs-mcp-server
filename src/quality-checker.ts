@@ -1,15 +1,16 @@
 /**
  * WPCS MCP Server - Quality Checker
- * Orchestrates hooks, deprecated functions, and delegates to security/performance checkers.
+ * Supplementary heuristics WPCS/PHPStan do not cover: hook timing, enqueue
+ * placement, hardcoded URLs/paths, large files, basic a11y. Delegates perf
+ * heuristics to performance-checker. Security/standards/deprecated are owned by
+ * WPCS + PHPStan (static) and Gate G (authz) - not re-implemented here.
  * Pure file analysis - no external dependencies.
  */
 
 import { readFileSync, statSync } from 'fs';
 import type { QualityIssue, QualityResult } from './types.js';
 import { findPhpFiles, getLineNumber, findPatternLine, relativePath } from './shared-utils.js';
-import { runSecurityChecks } from './security-checker.js';
 import { runPerformanceChecks } from './performance-checker.js';
-import { buildDeprecatedMap } from './wp-deprecated.js';
 
 /**
  * Run all quality checks on a directory.
@@ -29,25 +30,10 @@ export function runQualityChecks(projectPath: string): QualityResult {
     issues.push(...checkDirectOutput(rel, content));
     issues.push(...checkWordPressPatterns(rel, content, lines));
     issues.push(...checkAccessibility(rel, content));
-    // Deprecated function checks (new)
-    issues.push(...checkDeprecatedFunctions(rel, content));
   }
 
   // Large files
   issues.push(...checkLargeFiles(projectPath, phpFiles));
-
-  // Merge results from extracted security checker
-  const securityResult = runSecurityChecks(projectPath);
-  for (const secIssue of securityResult.issues) {
-    issues.push({
-      file: secIssue.file,
-      line: secIssue.line,
-      type: secIssue.type === 'info' ? 'warning' : secIssue.type,
-      category: 'security',
-      message: secIssue.message,
-      code: secIssue.code,
-    });
-  }
 
   // Merge results from extracted performance checker
   const perfResult = runPerformanceChecks(projectPath);
@@ -261,29 +247,6 @@ function checkAccessibility(file: string, content: string): QualityIssue[] {
       message: 'Use descriptive link text instead of "click here" or "read more".',
       code: 'non-descriptive-link',
     });
-  }
-
-  return issues;
-}
-
-function checkDeprecatedFunctions(file: string, content: string): QualityIssue[] {
-  const issues: QualityIssue[] = [];
-  const deprecatedMap = buildDeprecatedMap();
-
-  for (const [funcName, info] of deprecatedMap) {
-    const regex = new RegExp(`\\b${funcName}\\s*\\(`, 'g');
-    let match;
-    while ((match = regex.exec(content)) !== null) {
-      const lineStart = content.lastIndexOf('\n', match.index) + 1;
-      const lineContent = content.substring(lineStart, match.index);
-      if (/\/\/|\/\*|\*/.test(lineContent.trim().substring(0, 2))) continue;
-
-      issues.push({
-        file, line: getLineNumber(content, match.index), type: 'warning', category: 'deprecated',
-        message: `${funcName}() deprecated since WP ${info.since}. Use ${info.replacement} instead.`,
-        code: 'deprecated-wp-function',
-      });
-    }
   }
 
   return issues;

@@ -14,14 +14,12 @@ export declare class WpcsMcpServer {
     private checkPhpCompatibility;
     private qualityCheck;
     private frontendCheck;
-    private codeAnalysis;
     private validateProject;
     private fullCheck;
     private runPhpCompatibility;
     private formatCheckResult;
     private successResult;
     private errorResult;
-    private submissionCheck;
     private reportGenerate;
     private phpstanCheck;
     run(): Promise<void>;

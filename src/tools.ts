@@ -156,7 +156,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_full_check',
     description:
-      'Run comprehensive WordPress code check: WPCS + PHP Compatibility + Quality (security, performance, deprecated) + Frontend (accessibility, responsive) + Code Analysis (dead code, hooks) + Submission readiness. Use before release or WordPress.org submission.',
+      'Run the static release gate in order: WPCS (phpcs) + PHP Compatibility + Project/readme validation + supplementary Quality heuristics (hooks, performance, a11y) + Frontend consistency. Run php -l, PHPStan and Plugin Check (security) separately; authz/SSRF live in release Gate G.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -166,8 +166,8 @@ export const tools: Tool[] = [
         },
         php_version: {
           type: 'string',
-          description: 'PHP version for compatibility check (default: "7.4-")',
-          default: '7.4-',
+          description: 'PHP version range for compatibility check (portfolio standard: "8.1-")',
+          default: '8.1-',
         },
         text_domain: {
           type: 'string',
@@ -193,39 +193,9 @@ export const tools: Tool[] = [
     },
   },
   {
-    name: 'wpcs_code_analysis',
-    description:
-      'Detect dead code and hook issues: unused/undefined functions, orphan callbacks, duplicate definitions, hook priority conflicts, accepted_args mismatch, wrong-context hooks.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path to the plugin or theme directory',
-        },
-      },
-      required: ['path'],
-    },
-  },
-  {
-    name: 'wpcs_submission_check',
-    description:
-      'WordPress.org pre-submission audit: GPL license, stable tag match, changelog version, no tracking without consent, dismissible notices, uninstall cleanup, ABSPATH guards, prefix checking, no CDN deps, trademark check, required files, SVN readiness.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: {
-          type: 'string',
-          description: 'Path to the plugin or theme directory',
-        },
-      },
-      required: ['path'],
-    },
-  },
-  {
     name: 'wpcs_generate_report',
     description:
-      'Generate a comprehensive report in JSON, Markdown, or summary format. Runs all enabled checks and outputs a graded report (A-F). Optionally writes to a file for CI/CD integration.',
+      'Graded (A-F) report of the supplementary Quality + Frontend heuristics only, in JSON, Markdown, or summary format. NOT the release gate - run wpcs_full_check for WPCS/compat/validation. Optionally writes to a file for CI/CD integration.',
     inputSchema: {
       type: 'object',
       properties: {

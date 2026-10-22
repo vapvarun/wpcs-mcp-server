@@ -27,8 +27,6 @@ import {
 } from './validators.js';
 import { runQualityChecks } from './quality-checker.js';
 import { runFrontendChecks } from './frontend-checker.js';
-import { runCodeAnalysis } from './code-analyzer.js';
-import { runSubmissionChecks } from './submission-checker.js';
 import { generateReport, buildSection } from './report-generator.js';
 import {
   getStagedPhpFiles,
@@ -124,12 +122,6 @@ export class WpcsMcpServer {
 
           case 'wpcs_frontend_check':
             return this.frontendCheck(toolArgs.path as string);
-
-          case 'wpcs_code_analysis':
-            return this.codeAnalysis(toolArgs.path as string);
-
-          case 'wpcs_submission_check':
-            return this.submissionCheck(toolArgs.path as string);
 
           case 'wpcs_generate_report':
             return this.reportGenerate(
@@ -540,62 +532,6 @@ export class WpcsMcpServer {
     };
   }
 
-  private codeAnalysis(projectPath: string): CallToolResult {
-    if (!projectPath) {
-      return this.errorResult('path is required');
-    }
-
-    const result = runCodeAnalysis(projectPath);
-
-    let message = `CODE ANALYSIS (Dead Code Detection)\n${'='.repeat(50)}\n\n`;
-    message += `Path: ${projectPath}\n`;
-    message += `Functions: ${result.stats.totalFunctions} | Classes: ${result.stats.totalClasses} | Hooks: ${result.stats.totalHooks}\n\n`;
-
-    if (result.issues.length === 0) {
-      message += `✓ No dead code or disconnected functions found!\n`;
-      return this.successResult(message);
-    }
-
-    // Group by category
-    const byCategory = new Map<string, typeof result.issues>();
-    for (const issue of result.issues) {
-      const existing = byCategory.get(issue.category) || [];
-      existing.push(issue);
-      byCategory.set(issue.category, existing);
-    }
-
-    const categoryLabels: Record<string, string> = {
-      undefined: '1. UNDEFINED FUNCTIONS (called but not found)',
-      unused: '2. UNUSED CODE (defined but never called)',
-      orphan: '3. ORPHAN HOOKS (callback doesn\'t exist)',
-      duplicate: '4. DUPLICATES',
-    };
-
-    for (const [category, issues] of byCategory) {
-      message += `${categoryLabels[category] || category.toUpperCase()}\n${'-'.repeat(40)}\n`;
-
-      for (const issue of issues.slice(0, 15)) {
-        const prefix = issue.type === 'error' ? '[ERROR]' : '[WARN]';
-        message += `${prefix} ${issue.file}:${issue.line}\n`;
-        message += `  ${issue.message}\n\n`;
-      }
-
-      if (issues.length > 15) {
-        message += `  ... and ${issues.length - 15} more ${category} issues\n\n`;
-      }
-    }
-
-    // Summary
-    message += `${'='.repeat(50)}\n`;
-    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s)\n`;
-    message += `By category: ${Object.entries(result.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n`;
-
-    return {
-      content: [{ type: 'text', text: message } as TextContent],
-      isError: result.summary.errors > 0,
-    };
-  }
-
   private validateProject(
     projectPath: string,
     textDomain?: string
@@ -865,44 +801,17 @@ export class WpcsMcpServer {
       message += `  Categories: ${Object.entries(frontendResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
     }
 
-    // 6. Code Analysis (dead code, unused functions)
-    message += `6. CODE ANALYSIS\n${'-'.repeat(40)}\n`;
-    const codeResult = runCodeAnalysis(projectPath);
-
-    if (codeResult.summary.errors === 0 && codeResult.summary.warnings === 0) {
-      message += `✓ PASSED\n`;
-      message += `  Functions: ${codeResult.stats.totalFunctions} | Classes: ${codeResult.stats.totalClasses} | Hooks: ${codeResult.stats.totalHooks}\n\n`;
-    } else {
-      totalErrors += codeResult.summary.errors;
-      totalWarnings += codeResult.summary.warnings;
-      message += `✗ ${codeResult.summary.errors} error(s), ${codeResult.summary.warnings} warning(s)\n`;
-      message += `  Categories: ${Object.entries(codeResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
-    }
-
-    // 7. Submission Check (v2.0)
-    message += `7. SUBMISSION READINESS\n${'-'.repeat(40)}\n`;
-    const submissionResult = runSubmissionChecks(projectPath);
-
-    if (submissionResult.passed) {
-      message += `✓ PASSED\n\n`;
-    } else {
-      totalErrors += submissionResult.summary.errors;
-      totalWarnings += submissionResult.summary.warnings;
-      message += `✗ ${submissionResult.summary.errors} error(s), ${submissionResult.summary.warnings} warning(s)\n`;
-      message += `  Categories: ${Object.entries(submissionResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
-    }
-
     // Summary
     message += `${'='.repeat(50)}\n`;
     message += `SUMMARY: ${totalErrors} error(s), ${totalWarnings} warning(s)\n`;
     message += `${'='.repeat(50)}\n\n`;
 
     if (totalErrors === 0) {
-      message += `✓ READY FOR SUBMISSION\n`;
-      message += `This ${projectType} passes all checks.`;
+      message += `✓ READY\n`;
+      message += `This ${projectType} passes all static checks.`;
     } else {
       message += `✗ NOT READY\n`;
-      message += `Fix ${totalErrors} error(s) before WordPress.org submission.`;
+      message += `Fix ${totalErrors} error(s) before release.`;
     }
 
     return {
@@ -1006,49 +915,6 @@ export class WpcsMcpServer {
     };
   }
 
-  private submissionCheck(projectPath: string): CallToolResult {
-    if (!projectPath) {
-      return this.errorResult('path is required');
-    }
-
-    const result = runSubmissionChecks(projectPath);
-
-    let message = `WORDPRESS.ORG SUBMISSION CHECK\n${'='.repeat(50)}\n\n`;
-    message += `Path: ${projectPath}\n\n`;
-
-    if (result.passed) {
-      message += `✓ All submission checks passed! Ready for WordPress.org.\n`;
-      return this.successResult(message);
-    }
-
-    const byCategory = new Map<string, typeof result.issues>();
-    for (const issue of result.issues) {
-      const existing = byCategory.get(issue.category) || [];
-      existing.push(issue);
-      byCategory.set(issue.category, existing);
-    }
-
-    for (const [category, issues] of byCategory) {
-      message += `${category.toUpperCase()}\n${'-'.repeat(40)}\n`;
-      for (const issue of issues) {
-        const prefix = issue.type === 'error' ? '[ERROR]' : issue.type === 'warning' ? '[WARN]' : '[INFO]';
-        message += `${prefix} ${issue.file}${issue.line > 0 ? `:${issue.line}` : ''}\n`;
-        message += `  ${issue.message}\n\n`;
-      }
-    }
-
-    message += `${'='.repeat(50)}\n`;
-    message += `SUMMARY: ${result.summary.errors} error(s), ${result.summary.warnings} warning(s), ${result.summary.infos} info(s)\n`;
-    if (result.summary.errors > 0) {
-      message += `Fix errors before WordPress.org submission.`;
-    }
-
-    return {
-      content: [{ type: 'text', text: message } as TextContent],
-      isError: result.summary.errors > 0,
-    };
-  }
-
   private reportGenerate(
     projectPath: string,
     format: ReportFormat,
@@ -1062,14 +928,10 @@ export class WpcsMcpServer {
 
     const qualityResult = runQualityChecks(projectPath);
     const frontendResult = runFrontendChecks(projectPath);
-    const codeResult = runCodeAnalysis(projectPath);
-    const submissionResult = runSubmissionChecks(projectPath);
 
     const sections = [
       buildSection('Quality', qualityResult.issues),
       buildSection('Frontend', frontendResult.issues),
-      buildSection('Code Analysis', codeResult.issues),
-      buildSection('Submission Readiness', submissionResult.issues),
     ];
 
     const { content } = generateReport(projectPath, projectType, sections, format, outputFile);
