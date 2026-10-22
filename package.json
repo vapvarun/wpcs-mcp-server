@@ -1,7 +1,7 @@
 {
   "name": "wpcs-mcp-server",
   "version": "2.0.0",
-  "description": "MCP server for WordPress Coding Standards - comprehensive code quality, security, performance, accessibility, and submission readiness checks for Claude AI",
+  "description": "MCP server: the static WordPress release gate over canonical tools (phpcs/WPCS, PHPCompatibility, PHPStan, php -l) plus project validation and supplementary quality/frontend heuristics. Security = Plugin Check + Gate G; runtime QA = wppqa.",
   "type": "module",
   "main": "build/index.js",
   "bin": {
@@ -10,7 +10,8 @@
   "scripts": {
     "build": "./node_modules/.bin/tsc && chmod +x build/index.js",
     "start": "node build/index.js",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "prepare": "npm run build"
   },
   "keywords": [
     "mcp",
