@@ -204,12 +204,19 @@ export function checkPhpcsInstalled(): { installed: boolean; path?: string; erro
 export function checkWpcsInstalled(): { installed: boolean; standards?: string[]; error?: string } {
   try {
     const output = execSync('phpcs -i', { encoding: 'utf-8' });
-    const hasWordPress = output.includes('WordPress');
 
-    if (!hasWordPress) {
+    // Both standards are load-bearing: WordPress backs the WPCS stage,
+    // PHPCompatibilityWP backs the PHP-compat stage. If either is missing the
+    // corresponding check silently passes on zero rules, so treat a missing one
+    // as not-installed and let index.ts auto-install the full set.
+    const missing: string[] = [];
+    if (!output.includes('WordPress')) missing.push('wp-coding-standards/wpcs');
+    if (!output.includes('PHPCompatibilityWP')) missing.push('phpcompatibility/phpcompatibility-wp');
+
+    if (missing.length > 0) {
       return {
         installed: false,
-        error: 'WordPress coding standard not found. Install with: composer global require wp-coding-standards/wpcs',
+        error: `Required phpcs standard(s) not found: ${missing.join(', ')}. Install with: composer global require ${missing.join(' ')}`,
       };
     }
 

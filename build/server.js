@@ -538,8 +538,19 @@ export class WpcsMcpServer {
         message += `PHP Version: ${version}\n\n`;
         let totalErrors = 0;
         let totalWarnings = 0;
-        // 1. WPCS Check
-        message += `1. WORDPRESS CODING STANDARDS\n${'-'.repeat(40)}\n`;
+        // 1. PHP lint - fail-fast: a parse error voids every later stage
+        message += `1. PHP LINT (syntax)\n${'-'.repeat(40)}\n`;
+        const lint = this.runPhpLint(projectPath);
+        if (lint.errors > 0) {
+            message += `✗ ${lint.errors} file(s) with parse errors - fix these first; later stages skipped:\n`;
+            for (const f of lint.files.slice(0, 20))
+                message += `    ${f}\n`;
+            message += `\n${'='.repeat(50)}\nSUMMARY: ${lint.errors} parse error(s). Static gate aborted at lint.\n`;
+            return { content: [{ type: 'text', text: message }], isError: true };
+        }
+        message += `✓ PASSED\n\n`;
+        // 2. WPCS Check
+        message += `2. WORDPRESS CODING STANDARDS\n${'-'.repeat(40)}\n`;
         const wpcsResult = await this.phpcsRunner.check(projectPath, undefined);
         if (wpcsResult.success) {
             message += `✓ PASSED\n\n`;
@@ -551,7 +562,7 @@ export class WpcsMcpServer {
             message += `${wpcsResult.summary}\n\n`;
         }
         // 2. PHP Compatibility
-        message += `2. PHP COMPATIBILITY (${version})\n${'-'.repeat(40)}\n`;
+        message += `3. PHP COMPATIBILITY (${version})\n${'-'.repeat(40)}\n`;
         const compatResult = await this.runPhpCompatibility(projectPath, version);
         if (compatResult.errors === 0 && compatResult.warnings === 0) {
             message += `✓ PASSED\n\n`;
@@ -562,7 +573,7 @@ export class WpcsMcpServer {
             message += `✗ ${compatResult.errors} error(s), ${compatResult.warnings} warning(s)\n\n`;
         }
         // 3. Project Validation (headers, readme, i18n)
-        message += `3. PROJECT VALIDATION\n${'-'.repeat(40)}\n`;
+        message += `4. PROJECT VALIDATION\n${'-'.repeat(40)}\n`;
         // Headers
         let headerResult;
         if (projectType === 'plugin') {
@@ -609,7 +620,7 @@ export class WpcsMcpServer {
         }
         message += '\n';
         // 4. Quality Check (hooks, performance, accessibility, security)
-        message += `4. QUALITY CHECK\n${'-'.repeat(40)}\n`;
+        message += `5. QUALITY CHECK\n${'-'.repeat(40)}\n`;
         const qualityResult = runQualityChecks(projectPath);
         if (qualityResult.summary.errors === 0 && qualityResult.summary.warnings === 0) {
             message += `✓ PASSED\n\n`;
@@ -621,7 +632,7 @@ export class WpcsMcpServer {
             message += `  Categories: ${Object.entries(qualityResult.summary.byCategory).map(([k, v]) => `${k}(${v})`).join(', ')}\n\n`;
         }
         // 5. Frontend Consistency (HTML, CSS, responsive)
-        message += `5. FRONTEND CONSISTENCY\n${'-'.repeat(40)}\n`;
+        message += `6. FRONTEND CONSISTENCY\n${'-'.repeat(40)}\n`;
         const frontendResult = runFrontendChecks(projectPath);
         if (frontendResult.summary.errors === 0 && frontendResult.summary.warnings === 0) {
             message += `✓ PASSED\n\n`;
@@ -675,6 +686,28 @@ export class WpcsMcpServer {
             catch {
                 return { errors: 0, warnings: 0 };
             }
+        }
+    }
+    runPhpLint(projectPath) {
+        // Stage 1 fail-fast: `php -n -l` every source file (-n avoids php.ini noise
+        // like a mismatched imagick extension polluting output). A parse error here
+        // means no later static stage can be trusted.
+        // The path reaches a shell pipeline (find|xargs|grep), so refuse anything
+        // that isn't a real directory or that carries shell metacharacters.
+        if (!existsSync(projectPath) || /[;&|`$"'\\\n]/.test(projectPath)) {
+            return { errors: 0, files: [] };
+        }
+        const excludes = "-not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/build/*' -not -path '*/dist/*'";
+        try {
+            const out = execSync(`find "${projectPath}" -name '*.php' ${excludes} -print0 | xargs -0 -n1 -P4 php -n -l 2>&1 | grep -v 'No syntax errors' || true`, { encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
+            const files = [...new Set(out.split('\n')
+                    .filter((l) => l.startsWith('Errors parsing '))
+                    .map((l) => l.replace(/^Errors parsing /, '').trim()))];
+            return { errors: files.length, files };
+        }
+        catch {
+            // find/xargs returning nonzero with no parse errors is not a lint failure.
+            return { errors: 0, files: [] };
         }
     }
     formatCheckResult(result, workingDir) {
