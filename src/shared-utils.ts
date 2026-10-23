@@ -100,3 +100,8 @@ export function findPatternLine(lines: string[], pattern: RegExp): number {
 export function relativePath(filePath: string, projectPath: string): string {
   return filePath.startsWith(projectPath + '/') ? filePath.slice(projectPath.length + 1) : filePath;
 }
+
+/** Escape text for literal use inside a RegExp. */
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

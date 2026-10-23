@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import type { FrontendIssue, FrontendResult, FrontendCategory, IssueSeverity } from './types.js';
-import { findFilesByExt, findAllCodeFiles, getLineNumber as sharedGetLineNumber, findPatternLine as sharedFindPatternLine } from './shared-utils.js';
+import { escapeRegExp, findFilesByExt, findAllCodeFiles, getLineNumber as sharedGetLineNumber, findPatternLine as sharedFindPatternLine } from './shared-utils.js';
 
 /**
  * Run frontend consistency checks
@@ -315,7 +315,7 @@ function checkCssPatterns(file: string, content: string): FrontendIssue[] {
   ];
 
   for (const { prop, prefixes } of prefixableProperties) {
-    const propRegex = new RegExp(`(?<!-)${prop}\\s*:`, 'gi');
+    const propRegex = new RegExp(`(?<!-)${escapeRegExp(prop)}\\s*:`, 'gi');
     let match;
     while ((match = propRegex.exec(content)) !== null) {
       const surroundingCode = content.substring(Math.max(0, match.index - 200), match.index);
@@ -340,7 +340,7 @@ function checkCssPatterns(file: string, content: string): FrontendIssue[] {
   while ((match = vendorPrefixPattern.exec(content)) !== null) {
     const standardProperty = match[2];
     const afterMatch = content.substring(match.index, match.index + 300);
-    const standardRegex = new RegExp(`(?<!-)${standardProperty}\\s*:`);
+    const standardRegex = new RegExp(`(?<!-)${escapeRegExp(standardProperty)}\\s*:`);
 
     if (!standardRegex.test(afterMatch)) {
       issues.push({
@@ -876,7 +876,7 @@ function checkAccessibilityPatterns(file: string, content: string): FrontendIssu
     if (/type\s*=\s*["'](?:hidden|submit|button|reset|image)["']/i.test(inputTag)) continue;
     // Check for matching label or aria-label/aria-labelledby
     if (/aria-label\s*=|aria-labelledby\s*=/i.test(inputTag)) continue;
-    const labelPattern = new RegExp(`<label[^>]*for\\s*=\\s*["']${inputId}["']`, 'i');
+    const labelPattern = new RegExp(`<label[^>]*for\\s*=\\s*["']${escapeRegExp(inputId)}["']`, 'i');
     if (!labelPattern.test(content)) {
       issues.push({
         file, line: getLineNumber(content, match.index), type: 'error',

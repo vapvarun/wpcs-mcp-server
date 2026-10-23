@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, basename } from 'path';
 import type { ValidationResult, ProjectType } from './types.js';
-import { findPhpFiles } from './shared-utils.js';
+import { escapeRegExp, findPhpFiles } from './shared-utils.js';
 
 /**
  * Detect project type
@@ -335,7 +335,7 @@ export function validateTextDomain(projectPath: string, expectedDomain?: string)
 
       for (const func of i18nFunctions) {
         // Match function calls with text domain
-        const regex = new RegExp(`${func}\\s*\\([^)]*,\\s*['"]([^'"]+)['"]\\s*\\)`, 'g');
+        const regex = new RegExp(`${escapeRegExp(func)}\\s*\\([^)]*,\\s*['"]([^'"]+)['"]\\s*\\)`, 'g');
         let match;
         while ((match = regex.exec(content)) !== null) {
           if (match[1] !== domain) {

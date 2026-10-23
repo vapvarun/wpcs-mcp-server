@@ -4,7 +4,7 @@
 
 import { execSync } from 'child_process';
 import { existsSync, statSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { PhpcsResult, WpcsCheckResult, WpcsFixResult } from './types.js';
 
 export class PhpcsRunner {
@@ -39,7 +39,7 @@ export class PhpcsRunner {
    * Check if target path (or its parent directories) has a phpcs config file.
    * PHPCS auto-detects: .phpcs.xml, phpcs.xml, .phpcs.xml.dist, phpcs.xml.dist
    */
-  private findPhpcsConfig(target: string): boolean {
+  private findPhpcsConfig(target: string): string | null {
     const configNames = ['.phpcs.xml', 'phpcs.xml', '.phpcs.xml.dist', 'phpcs.xml.dist'];
     let dir = target;
 
@@ -53,14 +53,14 @@ export class PhpcsRunner {
     // Walk up to find config (max 10 levels)
     for (let i = 0; i < 10; i++) {
       for (const name of configNames) {
-        if (existsSync(join(dir, name))) return true;
+        if (existsSync(join(dir, name))) return join(dir, name);
       }
       const parent = dirname(dir);
       if (parent === dir) break;
       dir = parent;
     }
 
-    return false;
+    return null;
   }
 
   /**
@@ -69,12 +69,14 @@ export class PhpcsRunner {
    * skip --standard so PHPCS uses the project config instead.
    */
   private buildCommand(target: string, reportFormat: string = 'json'): string {
-    const hasProjectConfig = this.findPhpcsConfig(target);
+    const projectConfig = this.findPhpcsConfig(target);
 
     let command = `phpcs --report=${reportFormat} -q`;
 
-    // Only add --standard if no project-level config exists
-    if (!hasProjectConfig) {
+    // phpcs only auto-loads a config from its own cwd, so name the project config explicitly.
+    if (projectConfig) {
+      command += ` --standard="${projectConfig}"`;
+    } else {
       command += ` --standard=${this.standard}`;
 
       // Add exclude patterns (project config handles its own excludes)
@@ -102,11 +104,13 @@ export class PhpcsRunner {
    * Same logic: respects project-level config if present.
    */
   private buildFixCommand(target: string): string {
-    const hasProjectConfig = this.findPhpcsConfig(target);
+    const projectConfig = this.findPhpcsConfig(target);
 
     let command = `phpcbf`;
 
-    if (!hasProjectConfig) {
+    if (projectConfig) {
+      command += ` --standard="${projectConfig}"`;
+    } else {
       command += ` --standard=${this.standard}`;
       if (this.excludePatterns.length > 0) {
         command += ` --ignore=${this.excludePatterns.join(',')}`;
@@ -121,6 +125,7 @@ export class PhpcsRunner {
    * Run phpcs on a single file or directory
    */
   async check(target: string, workingDir?: string): Promise<WpcsCheckResult> {
+    target = resolve(workingDir ?? process.cwd(), target);
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
@@ -186,6 +191,7 @@ export class PhpcsRunner {
    * Run phpcbf to auto-fix a file
    */
   async fix(filePath: string, workingDir?: string): Promise<WpcsFixResult> {
+    filePath = resolve(workingDir ?? process.cwd(), filePath);
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
@@ -239,6 +245,7 @@ export class PhpcsRunner {
    * Check multiple files
    */
   async checkFiles(files: string[], workingDir?: string): Promise<WpcsCheckResult> {
+    files = files.map((f) => resolve(workingDir ?? process.cwd(), f));
     if (files.length === 0) {
       return {
         success: true,
@@ -254,11 +261,13 @@ export class PhpcsRunner {
     // Run phpcs on all files at once
     const fileList = files.map((f) => `"${f}"`).join(' ');
     // Check if first file's directory has project config
-    const hasProjectConfig = files.length > 0 && this.findPhpcsConfig(files[0]);
+    const projectConfig = files.length > 0 ? this.findPhpcsConfig(files[0]) : null;
 
     let command = `phpcs --report=json -q`;
 
-    if (!hasProjectConfig) {
+    if (projectConfig) {
+      command += ` --standard="${projectConfig}"`;
+    } else {
       command += ` --standard=${this.standard}`;
 
       if (this.excludePatterns.length > 0) {
