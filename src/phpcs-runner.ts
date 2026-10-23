@@ -39,7 +39,7 @@ export class PhpcsRunner {
    * Check if target path (or its parent directories) has a phpcs config file.
    * PHPCS auto-detects: .phpcs.xml, phpcs.xml, .phpcs.xml.dist, phpcs.xml.dist
    */
-  private findPhpcsConfig(target: string): string | null {
+  private findPhpcsConfig(target: string, root?: string): string | null {
     const configNames = ['.phpcs.xml', 'phpcs.xml', '.phpcs.xml.dist', 'phpcs.xml.dist'];
     let dir = target;
 
@@ -50,13 +50,18 @@ export class PhpcsRunner {
       }
     } catch { /* use target as-is */ }
 
+    // A ruleset can load code (autoload, custom sniffs), so never use one above the trusted root.
+    const base = root ? resolve(root) : null;
+    const inside = (d: string) => !base || d === base || d.startsWith(base + '/');
+    if (!inside(dir)) return null;
+
     // Walk up to find config (max 10 levels)
     for (let i = 0; i < 10; i++) {
       for (const name of configNames) {
         if (existsSync(join(dir, name))) return join(dir, name);
       }
       const parent = dirname(dir);
-      if (parent === dir) break;
+      if (parent === dir || !inside(parent)) break;
       dir = parent;
     }
 
@@ -68,8 +73,8 @@ export class PhpcsRunner {
    * If the target has a plugin-level phpcs config (.phpcs.xml.dist etc.),
    * skip --standard so PHPCS uses the project config instead.
    */
-  private buildCommand(target: string, reportFormat: string = 'json'): string {
-    const projectConfig = this.findPhpcsConfig(target);
+  private buildCommand(target: string, reportFormat: string = 'json', root?: string): string {
+    const projectConfig = this.findPhpcsConfig(target, root);
 
     let command = `phpcs --report=${reportFormat} -q`;
 
@@ -103,8 +108,8 @@ export class PhpcsRunner {
    * Build phpcbf command with all options.
    * Same logic: respects project-level config if present.
    */
-  private buildFixCommand(target: string): string {
-    const projectConfig = this.findPhpcsConfig(target);
+  private buildFixCommand(target: string, root?: string): string {
+    const projectConfig = this.findPhpcsConfig(target, root);
 
     let command = `phpcbf`;
 
@@ -129,7 +134,7 @@ export class PhpcsRunner {
     const options = workingDir ? { cwd: workingDir } : {};
 
     try {
-      const command = this.buildCommand(target);
+      const command = this.buildCommand(target, 'json', workingDir);
 
       try {
         execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
@@ -208,7 +213,7 @@ export class PhpcsRunner {
       }
 
       // Run phpcbf
-      const command = this.buildFixCommand(filePath);
+      const command = this.buildFixCommand(filePath, workingDir);
 
       try {
         execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe', maxBuffer: 64 * 1024 * 1024 });
@@ -261,7 +266,7 @@ export class PhpcsRunner {
     // Run phpcs on all files at once
     const fileList = files.map((f) => `"${f}"`).join(' ');
     // Check if first file's directory has project config
-    const projectConfig = files.length > 0 ? this.findPhpcsConfig(files[0]) : null;
+    const projectConfig = files.length > 0 ? this.findPhpcsConfig(files[0], workingDir) : null;
 
     let command = `phpcs --report=json -q`;
 
