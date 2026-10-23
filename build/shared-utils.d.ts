@@ -26,3 +26,5 @@ export declare function findPatternLine(lines: string[], pattern: RegExp): numbe
  * Get a relative path from a project root.
  */
 export declare function relativePath(filePath: string, projectPath: string): string;
+/** Escape text for literal use inside a RegExp. */
+export declare function escapeRegExp(text: string): string;

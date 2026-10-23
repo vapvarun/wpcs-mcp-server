@@ -98,4 +98,8 @@ export function findPatternLine(lines, pattern) {
 export function relativePath(filePath, projectPath) {
     return filePath.startsWith(projectPath + '/') ? filePath.slice(projectPath.length + 1) : filePath;
 }
+/** Escape text for literal use inside a RegExp. */
+export function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 //# sourceMappingURL=shared-utils.js.map
