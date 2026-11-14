@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, } from '@modelcontextpro
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { PhpcsRunner } from './phpcs-runner.js';
+import { DEFAULT_TEST_VERSION, findPhpstan, lintProject, runPhpCompatibility } from './php-gates.js';
 import { tools } from './tools.js';
 import { detectProjectType, validatePluginHeaders, validateThemeHeaders, validateReadme, validateTextDomain, validatePotFile, validateStableTagMatch, validateGplLicense, validateUninstallCleanup, } from './validators.js';
 import { runQualityChecks } from './quality-checker.js';
@@ -198,69 +199,44 @@ export class WpcsMcpServer {
         if (!target) {
             return this.errorResult('target is required');
         }
-        const version = phpVersion || '7.4-';
-        const options = workingDir ? { cwd: workingDir } : {};
-        // Build exclude patterns
-        const excludePatterns = [
-            'vendor/*',
-            'node_modules/*',
-            'build/*',
-            'dist/*',
-            '.git/*',
-        ];
-        let command = `phpcs --standard=PHPCompatibilityWP --runtime-set testVersion ${version} --report=json`;
-        command += ` --ignore=${excludePatterns.join(',')}`;
-        command += ` "${target}"`;
-        try {
-            try {
-                execSync(command, { ...options, encoding: 'utf-8', stdio: 'pipe' });
-                return this.successResult(`PHP COMPATIBILITY: PASSED\n\nAll files are compatible with PHP ${version}.\nNo deprecated functions, removed features, or syntax issues found.`);
-            }
-            catch (error) {
-                const execError = error;
-                const output = execError.stdout || '';
-                if (!output) {
-                    return this.errorResult(`phpcs failed: ${execError.message || 'Unknown error'}`);
-                }
-                const result = JSON.parse(output);
-                let message = `PHP COMPATIBILITY: ISSUES FOUND\n\n`;
-                message += `Checking compatibility with PHP ${version}\n\n`;
-                let totalErrors = 0;
-                let totalWarnings = 0;
-                for (const [filePath, data] of Object.entries(result.files)) {
-                    totalErrors += data.errors;
-                    totalWarnings += data.warnings;
-                    message += `${formatPath(filePath, workingDir)} (${data.errors} errors, ${data.warnings} warnings):\n`;
-                    for (const msg of data.messages) {
-                        const prefix = msg.type === 'ERROR' ? '[ERROR]' : '[WARNING]';
-                        message += `  Line ${msg.line}: ${prefix} ${msg.message}\n`;
-                        // Add helpful context for common issues
-                        if (msg.source.includes('RemovedFunction')) {
-                            message += `    → This function was removed in a newer PHP version\n`;
-                        }
-                        else if (msg.source.includes('DeprecatedFunction')) {
-                            message += `    → This function is deprecated and may be removed\n`;
-                        }
-                        else if (msg.source.includes('NewFeature')) {
-                            message += `    → This feature requires a newer PHP version\n`;
-                        }
-                    }
-                    message += '\n';
-                }
-                message += `\nSummary: ${totalErrors} error(s), ${totalWarnings} warning(s)\n`;
-                if (totalErrors > 0) {
-                    message += '\nFix these issues to ensure compatibility with PHP ' + version;
-                }
-                return {
-                    content: [{ type: 'text', text: message }],
-                    isError: totalErrors > 0,
-                };
-            }
+        const version = phpVersion || DEFAULT_TEST_VERSION;
+        const result = runPhpCompatibility(target, version, { cwd: workingDir });
+        if (!result.ran) {
+            return this.errorResult(`PHP COMPATIBILITY: DID NOT RUN (not a pass)\n${result.error}`);
         }
-        catch (error) {
-            const err = error;
-            return this.errorResult(`PHP compatibility check failed: ${err.message || 'Unknown error'}`);
+        if (result.errors === 0 && result.warnings === 0) {
+            return this.successResult(`PHP COMPATIBILITY: PASSED\n\nPHPCompatibilityWP reports no issue for PHP ${version} in ${Object.keys(result.files).length} file(s).\nThis is a static sniff, not a run on each PHP version; php -l runs in wpcs_full_check.`);
         }
+        let message = `PHP COMPATIBILITY: ISSUES FOUND\n\n`;
+        message += `Checking compatibility with PHP ${version}\n\n`;
+        for (const [filePath, data] of Object.entries(result.files)) {
+            if (!data.messages.length)
+                continue;
+            message += `${formatPath(filePath, workingDir)} (${data.errors} errors, ${data.warnings} warnings):\n`;
+            for (const msg of data.messages) {
+                const prefix = msg.type === 'ERROR' ? '[ERROR]' : '[WARNING]';
+                message += `  Line ${msg.line}: ${prefix} ${msg.message}\n`;
+                // Add helpful context for common issues
+                if (msg.source.includes('RemovedFunction')) {
+                    message += `    → This function was removed in a newer PHP version\n`;
+                }
+                else if (msg.source.includes('DeprecatedFunction')) {
+                    message += `    → This function is deprecated and may be removed\n`;
+                }
+                else if (msg.source.includes('NewFeature')) {
+                    message += `    → This feature requires a newer PHP version\n`;
+                }
+            }
+            message += '\n';
+        }
+        message += `\nSummary: ${result.errors} error(s), ${result.warnings} warning(s)\n`;
+        if (result.errors > 0) {
+            message += '\nFix these issues to ensure compatibility with PHP ' + version;
+        }
+        return {
+            content: [{ type: 'text', text: message }],
+            isError: result.errors > 0,
+        };
     }
     qualityCheck(projectPath) {
         if (!projectPath) {
@@ -531,7 +507,7 @@ export class WpcsMcpServer {
             return this.errorResult('path is required');
         }
         const projectType = detectProjectType(projectPath);
-        const version = phpVersion || '7.4-';
+        const version = phpVersion || DEFAULT_TEST_VERSION;
         let message = `FULL WORDPRESS CHECK\n${'='.repeat(50)}\n\n`;
         message += `Path: ${projectPath}\n`;
         message += `Type: ${projectType}\n`;
@@ -540,15 +516,22 @@ export class WpcsMcpServer {
         let totalWarnings = 0;
         // 1. PHP lint - fail-fast: a parse error voids every later stage
         message += `1. PHP LINT (syntax)\n${'-'.repeat(40)}\n`;
-        const lint = this.runPhpLint(projectPath);
-        if (lint.errors > 0) {
-            message += `✗ ${lint.errors} file(s) with parse errors - fix these first; later stages skipped:\n`;
-            for (const f of lint.files.slice(0, 20))
-                message += `    ${f}\n`;
-            message += `\n${'='.repeat(50)}\nSUMMARY: ${lint.errors} parse error(s). Static gate aborted at lint.\n`;
+        const lint = lintProject(projectPath);
+        if (!lint.ran) {
+            message += `✗ ERROR - lint did not run (not a pass): ${lint.error}\n`;
+            message += `\n${'='.repeat(50)}\nSUMMARY: static gate aborted, php -l could not run.\n`;
             return { content: [{ type: 'text', text: message }], isError: true };
         }
-        message += `✓ PASSED\n\n`;
+        if (lint.files.length > 0) {
+            message += `✗ ${lint.files.length} file(s) with parse errors - fix these first; later stages skipped:\n`;
+            for (const v of lint.byVersion)
+                for (const f of v.files.slice(0, 20))
+                    message += `    [PHP ${v.version}] ${f}\n`;
+            message += `  ${lint.coverage}\n`;
+            message += `\n${'='.repeat(50)}\nSUMMARY: ${lint.files.length} parse error(s). Static gate aborted at lint.\n`;
+            return { content: [{ type: 'text', text: message }], isError: true };
+        }
+        message += `✓ PASSED - ${lint.fileCount} file(s), ${lint.coverage}\n\n`;
         // 2. WPCS Check
         message += `2. WORDPRESS CODING STANDARDS\n${'-'.repeat(40)}\n`;
         const wpcsResult = await this.phpcsRunner.check(projectPath, undefined);
@@ -563,8 +546,13 @@ export class WpcsMcpServer {
         }
         // 2. PHP Compatibility
         message += `3. PHP COMPATIBILITY (${version})\n${'-'.repeat(40)}\n`;
-        const compatResult = await this.runPhpCompatibility(projectPath, version);
-        if (compatResult.errors === 0 && compatResult.warnings === 0) {
+        const compatResult = runPhpCompatibility(projectPath, version);
+        if (!compatResult.ran) {
+            // A stage that did not run is an error, never zero issues.
+            totalErrors += 1;
+            message += `✗ ERROR - did not run (not a pass): ${compatResult.error}\n\n`;
+        }
+        else if (compatResult.errors === 0 && compatResult.warnings === 0) {
             message += `✓ PASSED\n\n`;
         }
         else {
@@ -649,7 +637,7 @@ export class WpcsMcpServer {
         message += `${'='.repeat(50)}\n\n`;
         if (totalErrors === 0) {
             message += `✓ READY\n`;
-            message += `This ${projectType} passes all static checks.`;
+            message += `This ${projectType} passes php -l, WPCS, PHPCompatibility, project validation and the supplementary heuristics. PHPStan, Plugin Check and security review are separate gates and were not run here.`;
         }
         else {
             message += `✗ NOT READY\n`;
@@ -659,56 +647,6 @@ export class WpcsMcpServer {
             content: [{ type: 'text', text: message }],
             isError: totalErrors > 0,
         };
-    }
-    async runPhpCompatibility(target, phpVersion) {
-        const excludePatterns = ['vendor/*', 'node_modules/*', 'build/*', 'dist/*', '.git/*'];
-        const command = `phpcs --standard=PHPCompatibilityWP --runtime-set testVersion ${phpVersion} --report=json --ignore=${excludePatterns.join(',')} "${target}"`;
-        try {
-            execSync(command, { encoding: 'utf-8', stdio: 'pipe' });
-            return { errors: 0, warnings: 0 };
-        }
-        catch (error) {
-            const execError = error;
-            const output = execError.stdout || '';
-            if (!output) {
-                return { errors: 0, warnings: 0 };
-            }
-            try {
-                const result = JSON.parse(output);
-                let errors = 0;
-                let warnings = 0;
-                for (const data of Object.values(result.files)) {
-                    errors += data.errors;
-                    warnings += data.warnings;
-                }
-                return { errors, warnings };
-            }
-            catch {
-                return { errors: 0, warnings: 0 };
-            }
-        }
-    }
-    runPhpLint(projectPath) {
-        // Stage 1 fail-fast: `php -n -l` every source file (-n avoids php.ini noise
-        // like a mismatched imagick extension polluting output). A parse error here
-        // means no later static stage can be trusted.
-        // The path reaches a shell pipeline (find|xargs|grep), so refuse anything
-        // that isn't a real directory or that carries shell metacharacters.
-        if (!existsSync(projectPath) || /[;&|`$"'\\\n]/.test(projectPath)) {
-            return { errors: 0, files: [] };
-        }
-        const excludes = "-not -path '*/vendor/*' -not -path '*/node_modules/*' -not -path '*/build/*' -not -path '*/dist/*'";
-        try {
-            const out = execSync(`find "${projectPath}" -name '*.php' ${excludes} -print0 | xargs -0 -n1 -P4 php -n -l 2>&1 | grep -v 'No syntax errors' || true`, { encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024 });
-            const files = [...new Set(out.split('\n')
-                    .filter((l) => l.startsWith('Errors parsing '))
-                    .map((l) => l.replace(/^Errors parsing /, '').trim()))];
-            return { errors: files.length, files };
-        }
-        catch {
-            // find/xargs returning nonzero with no parse errors is not a lint failure.
-            return { errors: 0, files: [] };
-        }
     }
     formatCheckResult(result, workingDir) {
         if (result.success) {
@@ -787,32 +725,13 @@ export class WpcsMcpServer {
         if (!projectPath) {
             return this.errorResult('path is required');
         }
-        // Detect PHPStan binary
-        let phpstanPath = null;
-        const candidates = [
-            `${projectPath}/vendor/bin/phpstan`,
-            `${process.env.HOME}/.composer/vendor/bin/phpstan`,
-        ];
-        for (const p of candidates) {
-            try {
-                execSync(`test -f "${p}"`, { stdio: 'pipe' });
-                phpstanPath = p;
-                break;
-            }
-            catch { /* not found */ }
-        }
+        const phpstanPath = findPhpstan(projectPath);
         if (!phpstanPath) {
-            try {
-                execSync('which phpstan', { stdio: 'pipe' });
-                phpstanPath = 'phpstan';
-            }
-            catch { /* not found */ }
-        }
-        if (!phpstanPath) {
-            return this.successResult('PHPStan is not installed. To enable static analysis:\n' +
+            // Not installed means the analysis did not happen. That is not a pass.
+            return this.errorResult('PHPSTAN: NOT RUN (not a pass)\n\n' +
+                'PHPStan is not installed, so no static analysis was done. To enable it:\n' +
                 '  composer require --dev phpstan/phpstan\n' +
-                '  composer require --dev szepeviktor/phpstan-wordpress\n\n' +
-                'Skipping static analysis.');
+                '  composer require --dev szepeviktor/phpstan-wordpress');
         }
         const safeLevel = Math.max(0, Math.min(9, level));
         // Check if project has phpstan.neon — if so, respect it
@@ -830,7 +749,7 @@ export class WpcsMcpServer {
         }
         try {
             execSync(command, { encoding: 'utf-8', stdio: 'pipe', timeout: 300000, cwd: projectPath });
-            return this.successResult(`PHPSTAN: PASSED\n\nAll files pass PHPStan level ${safeLevel} analysis.\nNo type errors found.`);
+            return this.successResult(`PHPSTAN: PASSED\n\n${hasPhpstanConfig ? "PHPStan passed at the level set in the project's phpstan config." : `All files pass PHPStan level ${safeLevel} analysis.`}\nNo type errors found.`);
         }
         catch (error) {
             const execError = error;
@@ -840,7 +759,10 @@ export class WpcsMcpServer {
             }
             try {
                 const result = JSON.parse(output);
-                const totalErrors = result.totals?.file_errors || 0;
+                // PHPStan's own failures (bad config, missing autoload) come back in
+                // `errors` with zero file errors; they mean the analysis did not run.
+                const generalErrors = Array.isArray(result.errors) ? result.errors : [];
+                const totalErrors = (result.totals?.file_errors || 0) + generalErrors.length;
                 let message = `PHPSTAN: ISSUES FOUND (Level ${safeLevel})\n${'='.repeat(50)}\n\n`;
                 if (result.files) {
                     for (const [filePath, data] of Object.entries(result.files)) {
@@ -852,10 +774,13 @@ export class WpcsMcpServer {
                         message += '\n';
                     }
                 }
+                for (const e of generalErrors)
+                    message += `PHPStan error: ${e}\n`;
                 message += `${'='.repeat(50)}\nTotal: ${totalErrors} error(s)\n`;
+                // A non-zero exit is never a pass, whatever the totals say.
                 return {
                     content: [{ type: 'text', text: message }],
-                    isError: totalErrors > 0,
+                    isError: true,
                 };
             }
             catch {

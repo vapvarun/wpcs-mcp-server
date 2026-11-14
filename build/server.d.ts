@@ -16,8 +16,6 @@ export declare class WpcsMcpServer {
     private frontendCheck;
     private validateProject;
     private fullCheck;
-    private runPhpCompatibility;
-    private runPhpLint;
     private formatCheckResult;
     private successResult;
     private errorResult;

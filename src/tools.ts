@@ -98,7 +98,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_check_php_compatibility',
     description:
-      'Check PHP files for compatibility with specific PHP versions (8.1, 8.2, 8.3, 8.4). Uses PHPCompatibilityWP to detect deprecated functions, removed features, and syntax incompatibilities. Essential for ensuring your plugin/theme works across PHP versions.',
+      'Static PHPCompatibilityWP sniff for a PHP version or range (portfolio range 8.1-8.5): deprecated functions, removed features, syntax a version does not have. It does not execute or lint the code on each version (php -l runs in wpcs_full_check). Errors out, instead of passing, when phpcs crashes or returns no parseable report.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,8 +108,8 @@ export const tools: Tool[] = [
         },
         php_version: {
           type: 'string',
-          description: 'PHP version to check compatibility for (e.g., "8.1", "8.2", "8.3", "8.4"). Can also specify range like "7.4-8.4"',
-          default: '7.4-',
+          description: 'PHP version to check compatibility for (e.g., "8.1", "8.2", "8.3", "8.4", "8.5"). Can also be a range like "8.1-8.5" or "8.1-" (8.1 and newer, the default)',
+          default: '8.1-',
         },
         working_dir: {
           type: 'string',
@@ -122,7 +122,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_quality_check',
     description:
-      'Advanced quality checks: hook usage, enqueue timing, security (SQL injection, XSS, SSRF, nonce mismatch, shell exec), performance (N+1 queries, unbounded queries, missing timeouts), accessibility, deprecated WP functions. Catches issues WPCS misses.',
+      'Supplementary grep heuristics WPCS does not cover: hook and enqueue timing, hooks in constructors, direct output, hardcoded URLs / WP paths / table prefix, unprefixed functions, missing wp_reset_postdata, img without alt, non-descriptive links, oversized files. It runs NO security checks (no SQL injection, XSS, SSRF, nonce or shell-exec detection): use the wp-security-review skill and Plugin Check for security.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -156,7 +156,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_full_check',
     description:
-      'Run the static release gate in order: WPCS (phpcs) + PHP Compatibility + Project/readme validation + supplementary Quality heuristics (hooks, performance, a11y) + Frontend consistency. Run php -l, PHPStan and Plugin Check (security) separately; authz/SSRF live in release Gate G.',
+      'Run the static release gate in order: php -l with every available PHP binary (fail-fast; reports which versions linted) -> WPCS (phpcs) -> PHPCompatibilityWP -> project/readme validation -> supplementary Quality heuristics (hooks, performance, a11y; no security checks) -> Frontend consistency. A stage that cannot run (bad path, phpcs crash, unparseable output) is an error, never a pass. PHPStan (wpcs_phpstan_check), Plugin Check and security review (wp-security-review skill, release Gate G) are separate and not run here.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -220,7 +220,7 @@ export const tools: Tool[] = [
   {
     name: 'wpcs_phpstan_check',
     description:
-      'Run PHPStan static analysis (if installed). Uses WordPress stubs for better type checking. Falls back gracefully if PHPStan is not installed.',
+      "Run PHPStan static analysis with the project's vendor binary (or a global one), honouring its phpstan.neon. If PHPStan is not installed the result is NOT RUN and an error, not a pass.",
     inputSchema: {
       type: 'object',
       properties: {

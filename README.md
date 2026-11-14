@@ -308,16 +308,16 @@ PATH="YOUR_PHP_PATH:$HOME/.composer/vendor/bin:$PATH" node build/index.js
 
 | Tool | What It Does |
 |------|--------------|
-| `wpcs_full_check` | The ordered gate: `php -l` (fail-fast) -> WPCS -> PHP compat -> project validation -> supplementary heuristics |
-| `wpcs_check_php_compatibility` | `php -l` + PHPCompatibilityWP across PHP 8.1-8.5 |
-| `wpcs_phpstan_check` | PHPStan at the plugin's own level (uses its vendor binary) |
+| `wpcs_full_check` | The ordered gate: `php -l` (fail-fast, with every PHP binary found; the report names the versions that linted) -> WPCS -> PHP compat -> project validation -> supplementary heuristics. A stage that cannot run is an error, never a pass |
+| `wpcs_check_php_compatibility` | PHPCompatibilityWP static sniff, default `8.1-` (PHP 8.1 and newer). Does not run `php -l` and does not execute code on each version; a phpcs crash is an error |
+| `wpcs_phpstan_check` | PHPStan at the plugin's own level (uses its vendor binary). Not installed = `NOT RUN`, an error, not a pass |
 | `wpcs_validate_project` | Headers, readme.txt, text domain, `.pot`, stable-tag match, GPL, uninstall |
 
 **Supplementary heuristics** (things WPCS/PHPStan do not cover)
 
 | Tool | What It Does |
 |------|--------------|
-| `wpcs_quality_check` | Hook timing, enqueue placement, hardcoded paths, large files, basic a11y |
+| `wpcs_quality_check` | Hook timing, enqueue placement, hardcoded paths, large files, basic a11y. No security checks: use the wp-security-review skill and Plugin Check |
 | `wpcs_frontend_check` | HTML/CSS/JS consistency + accessibility heuristics |
 | `wpcs_generate_report` | Graded (A-F) report of the two heuristics above |
 
@@ -340,7 +340,7 @@ Just ask Claude in natural language:
 "Fix WPCS issues in includes/class-my-plugin.php"
 "Check the entire src/ directory for coding standards"
 "Check PHP 8.2 compatibility for my plugin"
-"Is my code compatible with PHP 8.1 to 8.4?"
+"Is my code compatible with PHP 8.1 to 8.5?"
 ```
 
 ### Typical Workflow
@@ -379,11 +379,11 @@ The `WordPress` ruleset includes:
 
 ## PHP Compatibility Checking
 
-Check if your code works with PHP 8.1, 8.2, 8.3, and 8.4:
+Check your code against PHP 8.1 through 8.5 (a static PHPCompatibilityWP sniff):
 
 ```
 "Check PHP 8.2 compatibility for src/"
-"Is my plugin compatible with PHP 8.1-8.4?"
+"Is my plugin compatible with PHP 8.1-8.5?"
 ```
 
 ### What It Detects:
@@ -401,11 +401,15 @@ Check if your code works with PHP 8.1, 8.2, 8.3, and 8.4:
 ```
 "8.1"      → Check for PHP 8.1 compatibility only
 "8.2"      → Check for PHP 8.2 compatibility only
-"7.4-"     → Check PHP 7.4 and all newer versions
-"8.1-8.4"  → Check PHP 8.1 through 8.4 compatibility
+"8.1-"     → Check PHP 8.1 and all newer versions (the default)
+"8.1-8.5"  → Check PHP 8.1 through 8.5 compatibility
 ```
 
-WordPress.org requires **PHP 7.4+** minimum, so use `"7.4-"` to ensure broad compatibility.
+The supported range for every Wbcom plugin and theme is **PHP 8.1-8.5**, so the default is `"8.1-"`.
+
+### Lint across PHP versions
+
+`wpcs_full_check` runs `php -n -l` with every PHP binary it finds: `php`, plus `php8.1` ... `php8.5` on `PATH` or Homebrew's `php@8.x`. Set `WPCS_PHP_BINARIES` (comma-separated paths) to choose them yourself. The report says which versions linted; with one binary it says "linted with PHP X only".
 
 ---
 
