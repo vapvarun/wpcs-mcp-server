@@ -42,6 +42,16 @@ test('compat: a real report is counted, and a clean report passes', () => {
     const clean = runPhpCompatibility('.', '8.1-', { phpcs: fakePhpcs('{"totals":{},"files":{}}', 0) });
     assert.deepEqual([clean.ran, clean.ran && clean.errors], [true, 0]);
 });
+test('compat: a target that looks like an option, or a bad testVersion, never reaches phpcs', () => {
+    const marker = join(tmp(), 'phpcs-ran');
+    const spy = fakePhpcs('{"totals":{},"files":{}}', 0);
+    const flag = runPhpCompatibility('--report-file=' + marker, '8.1-', { phpcs: spy });
+    assert.equal(flag.ran, false);
+    assert.match(flag.error, /does not exist/);
+    const ver = runPhpCompatibility('.', '8.1- --standard=Squiz', { phpcs: spy });
+    assert.equal(ver.ran, false);
+    assert.match(ver.error, /invalid testVersion/);
+});
 // ── 11 + 12. lint ───────────────────────────────────────────────────────────
 test('lint: a bad path or a tree with no PHP did not run (was: 0 errors, PASSED)', () => {
     const missing = lintProject(join(tmp(), 'nope'));

@@ -6,7 +6,7 @@
  */
 import { execFileSync, spawnSync } from 'child_process';
 import { existsSync, statSync } from 'fs';
-import { delimiter, join } from 'path';
+import { delimiter, join, resolve } from 'path';
 import { findPhpFiles } from './shared-utils.js';
 /** Portfolio floor: every plugin and theme supports PHP 8.1 through 8.5. */
 export const DEFAULT_TEST_VERSION = '8.1-';
@@ -14,12 +14,21 @@ const PHP_MINORS = ['8.1', '8.2', '8.3', '8.4', '8.5'];
 const COMPAT_IGNORE = ['vendor/*', 'node_modules/*', 'build/*', 'dist/*', '.git/*'];
 /** Run PHPCompatibilityWP. A crash, an empty report or unparseable output is `ran: false`, never zero issues. */
 export function runPhpCompatibility(target, testVersion, opts = {}) {
+    // The target becomes a phpcs argument: resolve it to an absolute path that exists,
+    // so a value starting with '-' can never be read as a phpcs option.
+    const absTarget = resolve(opts.cwd ?? process.cwd(), target);
+    if (!existsSync(absTarget)) {
+        return { ran: false, error: `target does not exist: ${absTarget}` };
+    }
+    if (!/^\d+\.\d+(-(\d+\.\d+)?)?$/.test(testVersion)) {
+        return { ran: false, error: `invalid testVersion "${testVersion}" (expected e.g. 8.1- or 8.1-8.5)` };
+    }
     const args = [
         '--standard=PHPCompatibilityWP',
         '--runtime-set', 'testVersion', testVersion,
         '--report=json',
         `--ignore=${COMPAT_IGNORE.join(',')}`,
-        target,
+        absTarget,
     ];
     let output;
     try {
